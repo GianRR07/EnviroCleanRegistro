@@ -23,6 +23,7 @@ export default function Worker() {
 
   const [activeCamera, setActiveCamera] = useState<any>(null);
   const [previewPhoto, setPreviewPhoto] = useState<any>(null);
+  const [loadingPhoto, setLoadingPhoto] = useState(false);
 
   const [form, setForm] = useState({
     cliente: "",
@@ -65,42 +66,51 @@ export default function Worker() {
   };
 
   const takePhoto = async () => {
-    if (!cameraRef.current || !activeCamera) return;
+    if (!cameraRef.current || !activeCamera || loadingPhoto) return;
 
-    const photo = await cameraRef.current.takePictureAsync({
-      quality: 0.7,
-    });
+    setLoadingPhoto(true);
 
-    const gps = await getGPS();
+    try {
+      const photo = await cameraRef.current.takePictureAsync({
+        quality: 0.7,
+        skipProcessing: true,
+      });
 
-    const peruDate = new Intl.DateTimeFormat("es-PE", {
-  timeZone: "America/Lima",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-  hour12: false,
-}).format(new Date());
+      const gps = await getGPS();
 
-const data = {
+      const peruDate = new Intl.DateTimeFormat("es-PE", {
+        timeZone: "America/Lima",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      }).format(new Date());
+
+      const data = {
   uri: photo.uri,
   gps,
-  date: peruDate,
+  createdAt: peruDate,
 };
 
-    const { boxId, type } = activeCamera;
+      const { boxId, type } = activeCamera;
 
-    setActiveCamera(null);
+      setBoxes((prev: any) => ({
+        ...prev,
+        [boxId]: {
+          ...prev[boxId],
+          [type]: data,
+        },
+      }));
 
-    setBoxes((prev: any) => ({
-      ...prev,
-      [boxId]: {
-        ...prev[boxId],
-        [type]: data,
-      },
-    }));
+      setActiveCamera(null);
+    } catch (e) {
+      console.log("error photo", e);
+    } finally {
+      setLoadingPhoto(false);
+    }
   };
 
   const deletePhoto = (boxId: number, type: string) => {
@@ -117,15 +127,15 @@ const data = {
       boxes,
       status: "pendiente",
       createdAt: new Intl.DateTimeFormat("es-PE", {
-  timeZone: "America/Lima",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-  hour12: false,
-}).format(new Date()),
+        timeZone: "America/Lima",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      }).format(new Date()),
     };
 
     await saveRecord(record);
@@ -148,17 +158,33 @@ const data = {
         <View style={styles.card}>
           <Text style={styles.section}>Datos generales</Text>
 
-          <TextInput placeholder="Cliente" style={styles.input}
-            onChangeText={(t) => setForm({ ...form, cliente: t })} />
+          <TextInput
+            placeholder="Cliente"
+            placeholderTextColor="#888"
+            style={styles.input}
+            onChangeText={(t) => setForm({ ...form, cliente: t })}
+          />
 
-          <TextInput placeholder="Tipo servicio" style={styles.input}
-            onChangeText={(t) => setForm({ ...form, tipoServicio: t })} />
+          <TextInput
+            placeholder="Tipo servicio"
+            placeholderTextColor="#888"
+            style={styles.input}
+            onChangeText={(t) => setForm({ ...form, tipoServicio: t })}
+          />
 
-          <TextInput placeholder="Área" style={styles.input}
-            onChangeText={(t) => setForm({ ...form, area: t })} />
+          <TextInput
+            placeholder="Área"
+            placeholderTextColor="#888"
+            style={styles.input}
+            onChangeText={(t) => setForm({ ...form, area: t })}
+          />
 
-          <TextInput placeholder="Observaciones" style={styles.input}
-            onChangeText={(t) => setForm({ ...form, observaciones: t })} />
+          <TextInput
+            placeholder="Observaciones"
+            placeholderTextColor="#888"
+            style={styles.input}
+            onChangeText={(t) => setForm({ ...form, observaciones: t })}
+          />
         </View>
 
         {/* BOXES */}
@@ -179,6 +205,7 @@ const data = {
               <View key={key} style={styles.boxCard}>
                 <TextInput
                   placeholder="Nombre estación"
+                  placeholderTextColor="#888"
                   value={box.name}
                   style={styles.input}
                   onChangeText={(t) =>
@@ -239,28 +266,37 @@ const data = {
 
       {/* CAMERA */}
       <Modal visible={!!activeCamera}>
-        <View style={{ flex: 1 }}>
+        <View style={{ flex: 1, backgroundColor: "black" }}>
           <CameraView ref={cameraRef} style={{ flex: 1 }} />
 
           <View style={styles.cameraActions}>
-            <TouchableOpacity onPress={() => setActiveCamera(null)} style={styles.btnOutline}>
-              <Text>Cancelar</Text>
+            <TouchableOpacity
+              onPress={() => setActiveCamera(null)}
+              style={styles.btnOutline}
+            >
+              <Text style={{ color: "#fff" }}>Cancelar</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={takePhoto} style={styles.btnPrimary}>
-              <Text style={{ color: "#fff" }}>Capturar</Text>
+            <TouchableOpacity
+              onPress={takePhoto}
+              style={[
+                styles.btnPrimary,
+                loadingPhoto && { opacity: 0.5 },
+              ]}
+              disabled={loadingPhoto}
+            >
+              <Text style={{ color: "#fff" }}>
+                {loadingPhoto ? "Capturando..." : "Capturar"}
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
       </Modal>
 
-      {/* PREVIEW FIX (SIN NEGRO) */}
+      {/* PREVIEW FIX */}
       <Modal visible={!!previewPhoto} animationType="fade">
         <View style={styles.previewFix}>
-          <TouchableOpacity
-            onPress={() => setPreviewPhoto(null)}
-            style={{ marginBottom: 10 }}
-          >
+          <TouchableOpacity onPress={() => setPreviewPhoto(null)}>
             <Text style={{ color: "#fff", fontSize: 18 }}>✕ cerrar</Text>
           </TouchableOpacity>
 
@@ -274,20 +310,16 @@ const data = {
             <Text style={{ color: "#fff" }}>No hay imagen</Text>
           )}
 
-          <View style={{ marginTop: 10 }}>
-            {previewPhoto?.date && (
-              <Text style={{ color: "#fff" }}>
-                📅 {previewPhoto.date}
-              </Text>
-            )}
+          <Text style={{ color: "#fff", marginTop: 10 }}>
+            📅 {previewPhoto?.date}
+          </Text>
 
-            {previewPhoto?.gps && (
-              <Text style={{ color: "#fff" }}>
-                📍 {previewPhoto.gps.latitude.toFixed(5)},{" "}
-                {previewPhoto.gps.longitude.toFixed(5)}
-              </Text>
-            )}
-          </View>
+          {previewPhoto?.gps && (
+            <Text style={{ color: "#fff" }}>
+              📍 {previewPhoto.gps.latitude.toFixed(5)},{" "}
+              {previewPhoto.gps.longitude.toFixed(5)}
+            </Text>
+          )}
         </View>
       </Modal>
     </SafeAreaView>
@@ -311,18 +343,12 @@ const PhotoItem = ({ label, data, onTake, onView, onDelete }: any) => (
 
         <Text style={styles.meta}>📅 {data.date}</Text>
 
-        {data.gps && (
-          <Text style={styles.meta}>
-            📍 {data.gps.latitude.toFixed(5)}, {data.gps.longitude.toFixed(5)}
-          </Text>
-        )}
-
         <View style={styles.row}>
-          <TouchableOpacity onPress={onTake} style={styles.repeatBtn}>
+          <TouchableOpacity style={styles.repeatBtn} onPress={onTake}>
             <Text style={{ color: "#1976D2" }}>Repetir</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={onDelete} style={styles.deleteBtn}>
+          <TouchableOpacity style={styles.deleteBtn} onPress={onDelete}>
             <Text style={{ color: "red" }}>Borrar</Text>
           </TouchableOpacity>
         </View>
@@ -340,14 +366,19 @@ const styles = StyleSheet.create({
   card: { backgroundColor: "#fff", padding: 15, borderRadius: 10, marginBottom: 10 },
   section: { fontWeight: "bold", marginBottom: 10 },
 
-  input: { borderWidth: 1, borderColor: "#ddd", padding: 10, borderRadius: 8, marginBottom: 10 },
+  input: {
+    borderWidth: 1,
+    borderColor: "#ddd",
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 10,
+    backgroundColor: "#fff",
+    color: "#000",
+  },
 
   addBtn: { backgroundColor: "green", padding: 12, borderRadius: 10 },
-
   boxCard: { marginBottom: 10 },
-
   deleteBox: { backgroundColor: "red", padding: 10, borderRadius: 10, marginTop: 10 },
-
   saveBtn: { backgroundColor: "#1B5E20", padding: 15, borderRadius: 10 },
 
   takeBtn: { backgroundColor: "#2E7D32", padding: 10, borderRadius: 8, marginTop: 5 },
@@ -355,12 +386,11 @@ const styles = StyleSheet.create({
   row: { flexDirection: "row", justifyContent: "space-between", marginTop: 8 },
 
   repeatBtn: { borderWidth: 1, borderColor: "#1976D2", padding: 6, borderRadius: 8 },
-
   deleteBtn: { borderWidth: 1, borderColor: "red", padding: 6, borderRadius: 8 },
 
   image: { height: 120, borderRadius: 10, marginTop: 8 },
 
-  meta: { fontSize: 12 },
+  meta: { fontSize: 12, color: "#333" },
 
   previewFix: {
     flex: 1,
@@ -370,10 +400,7 @@ const styles = StyleSheet.create({
     padding: 10,
   },
 
-  previewImg: {
-    width: "100%",
-    height: "80%",
-  },
+  previewImg: { width: "100%", height: "80%" },
 
   cameraActions: {
     position: "absolute",
@@ -391,6 +418,7 @@ const styles = StyleSheet.create({
 
   btnOutline: {
     borderWidth: 1,
+    borderColor: "#fff",
     padding: 12,
     borderRadius: 10,
   },
