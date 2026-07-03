@@ -121,7 +121,10 @@ export default function Login() {
             <TouchableOpacity
               style={styles.forgotContainer}
               onPress={() =>
-                alert("Funcionalidad de recuperación próximamente")
+                alert(
+                  "Comunícate al +51 941 719 133 y solicita un cambio de contraseña.\n\n" +
+                    "Por temas de seguridad este proceso no se maneja de forma automática.",
+                )
               }
             >
               <Text style={styles.forgotText}>¿Olvidaste tu contraseña?</Text>
