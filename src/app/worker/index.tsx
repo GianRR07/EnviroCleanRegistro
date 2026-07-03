@@ -1,5 +1,6 @@
 import { saveRecordAppwrite } from "@/utils/appwriteRecords";
 import { saveRecord } from "@/utils/storage";
+import { uploadPhoto } from "@/utils/uploadPhoto";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { CameraView, useCameraPermissions } from "expo-camera";
@@ -28,13 +29,19 @@ type GPSData = {
 
 type PhotoData = {
   uri: string;
+  appwriteId?: string;
   gps: GPSData | null;
   createdAt: string;
 };
 
 type PhotoType = "estadoEncontrado" | "estadoFinal" | "formatoFisico";
 
-type TipoServicio = "" | "Opcion1" | "Opcion2";
+type TipoServicio =
+  | ""
+  | "Desratizacion"
+  | "Control Aviar"
+  | "Desinsectacion"
+  | "Capturador de Insectos";
 type TipoEstacionPrincipal = "" | "Jaula" | "Cebadero" | "Capturador";
 type TipoCebadero = "" | "Trampa pegante" | "Bloque";
 
@@ -275,6 +282,10 @@ export default function Worker() {
       detalleEstacion = "Trampa pegante";
     }
 
+    if (value === "Capturador") {
+      detalleEstacion = "Lamina Pegante";
+    }
+
     setForm((prev) => ({
       ...prev,
       tipoEstacionPrincipal: value,
@@ -403,9 +414,11 @@ export default function Worker() {
       });
 
       const permanentUri = await savePhotoPermanently(photo.uri);
+      const uploaded = await uploadPhoto(permanentUri);
 
       const data: PhotoData = {
         uri: permanentUri,
+        appwriteId: uploaded.$id,
         gps: null,
         createdAt: getPeruDate(),
       };
@@ -610,7 +623,12 @@ export default function Worker() {
             label="Tipo de servicio"
             icon="construct-outline"
             value={form.tipoServicio}
-            options={["Opcion1", "Opcion2"]}
+            options={[
+              "Desratizacion",
+              "Control Aviar",
+              "Desinsectacion",
+              "Capturador de Insectos",
+            ]}
             placeholder="Selecciona una opción"
             onChange={(value) =>
               handleTipoServicioChange(value as TipoServicio)
@@ -649,6 +667,16 @@ export default function Worker() {
                 handleDetalleCebaderoChange(value as TipoCebadero)
               }
             />
+          )}
+
+          {form.tipoEstacionPrincipal === "Capturador" && (
+            <View style={styles.readOnlyField}>
+              <View style={styles.readOnlyHeader}>
+                <Ionicons name="bug-outline" size={20} color="#2E7D32" />
+                <Text style={styles.readOnlyLabel}>Detalle de estación</Text>
+              </View>
+              <Text style={styles.readOnlyText}>Lamina Pegante</Text>
+            </View>
           )}
 
           <View style={styles.inputGroup}>
@@ -924,9 +952,11 @@ const OptionSelector = ({
         <Text style={styles.selectorLabel}>{label}</Text>
       </View>
 
-      <Text style={[styles.selectorValue, !value && { color: "#999" }]}>
-        {value || placeholder}
-      </Text>
+      {!value && (
+        <Text style={[styles.selectorValue, { color: "#999" }]}>
+          {placeholder}
+        </Text>
+      )}
 
       <View style={styles.optionRow}>
         {options.map((option) => {
