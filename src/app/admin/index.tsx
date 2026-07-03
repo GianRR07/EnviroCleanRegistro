@@ -1,22 +1,22 @@
+import { getRecords } from "@/utils/storage";
+import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
+  Dimensions,
+  Image,
+  Linking,
   Modal,
-  TextInput,
+  ScrollView,
   StyleSheet,
   Switch,
-  Image,
-  Dimensions,
-  Linking,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
-
-import { SafeAreaView } from "react-native-safe-area-context";
 import { Card } from "react-native-paper";
-import { useRouter } from "expo-router";
-import { getRecords } from "@/utils/storage";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 const screenWidth = Dimensions.get("window").width;
 
@@ -30,7 +30,7 @@ export default function Admin() {
 
   const [form, setForm] = useState({
     name: "",
-    role: "cliente", // 👈 cliente o supervisor
+    role: "cliente",
   });
 
   const [permissions, setPermissions] = useState({
@@ -55,540 +55,588 @@ export default function Admin() {
       ...prev,
       { id: Date.now(), name: form.name, role: form.role },
     ]);
-
     setForm({ name: "", role: "cliente" });
     setModal(false);
   };
 
   const togglePermission = (key: keyof typeof permissions) => {
-    setPermissions((prev) => ({
-      ...prev,
-      [key]: !prev[key],
-    }));
+    setPermissions((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
   const completados = records.filter((r) => r.status === "completo").length;
-  const pendientes = records.filter(
-  (r) => r.status !== "completo"
-).length;
-  const openGoogleMaps = (latitude: number, longitude: number) => {
-  const url = `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`;
-  Linking.openURL(url);
-};
-  return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }}>
-      <ScrollView contentContainerStyle={styles.container}>
+  const pendientes = records.filter((r) => r.status !== "completo").length;
 
+  const openGoogleMaps = (latitude: number, longitude: number) => {
+    const url = `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`;
+    Linking.openURL(url);
+  };
+
+  const getStatusBadge = (status: string) => {
+    const isComplete = status === "completo";
+    return (
+      <View
+        style={[
+          styles.badge,
+          isComplete ? styles.badgeGreen : styles.badgeOrange,
+        ]}
+      >
+        <Text style={styles.badgeText}>
+          {isComplete ? "Completado" : "Pendiente"}
+        </Text>
+      </View>
+    );
+  };
+
+  return (
+    <SafeAreaView style={styles.safeArea}>
+      <ScrollView
+        contentContainerStyle={styles.container}
+        showsVerticalScrollIndicator={false}
+      >
         {/* HEADER */}
         <View style={styles.header}>
-          <Text style={styles.title}>Panel Admin</Text>
-
-          <TouchableOpacity onPress={() => router.replace("/login")}>
-            <Text style={styles.logout}>Salir</Text>
+          <View>
+            <Text style={styles.title}>Panel Admin</Text>
+            <Text style={styles.subtitle}>
+              Control de registros en tiempo real
+            </Text>
+          </View>
+          <TouchableOpacity
+            onPress={() => router.replace("/login")}
+            style={styles.logoutBtn}
+          >
+            <Ionicons name="log-out-outline" size={20} color="#c62828" />
+            <Text style={styles.logoutText}>Salir</Text>
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.subtitle}>
-          Control de registros en tiempo real
-        </Text>
-
         {/* STATS */}
         <View style={styles.statsRow}>
-          <View style={styles.statBox}>
-            <Text>Usuarios</Text>
+          <View style={[styles.statCard, { borderLeftColor: "#2E7D32" }]}>
+            <Ionicons name="people-outline" size={24} color="#2E7D32" />
+            <Text style={styles.statLabel}>Usuarios</Text>
             <Text style={styles.statNumber}>{users.length}</Text>
           </View>
 
-          <View style={styles.statBox}>
-            <Text>Registros</Text>
+          <View style={[styles.statCard, { borderLeftColor: "#1565C0" }]}>
+            <Ionicons name="document-text-outline" size={24} color="#1565C0" />
+            <Text style={styles.statLabel}>Registros</Text>
             <Text style={styles.statNumber}>{records.length}</Text>
           </View>
 
-          <View style={styles.statBox}>
-            <Text>Completados</Text>
+          <View style={[styles.statCard, { borderLeftColor: "#43A047" }]}>
+            <Ionicons
+              name="checkmark-circle-outline"
+              size={24}
+              color="#43A047"
+            />
+            <Text style={styles.statLabel}>Completados</Text>
             <Text style={styles.statNumber}>{completados}</Text>
           </View>
 
-          <View style={styles.statBox}>
-            <Text>Pendientes</Text>
+          <View style={[styles.statCard, { borderLeftColor: "#FB8C00" }]}>
+            <Ionicons name="time-outline" size={24} color="#FB8C00" />
+            <Text style={styles.statLabel}>Pendientes</Text>
             <Text style={styles.statNumber}>{pendientes}</Text>
           </View>
         </View>
 
-        {/* BTN */}
-        <TouchableOpacity style={styles.btn} onPress={() => setModal(true)}>
-          <Text style={styles.btnText}>+ Crear usuario</Text>
+        {/* BOTÓN CREAR USUARIO */}
+        <TouchableOpacity
+          style={styles.primaryBtn}
+          onPress={() => setModal(true)}
+        >
+          <Ionicons
+            name="person-add-outline"
+            size={20}
+            color="#fff"
+            style={{ marginRight: 8 }}
+          />
+          <Text style={styles.primaryBtnText}>Crear nuevo usuario</Text>
         </TouchableOpacity>
 
         {/* PERMISOS */}
-        <Text style={styles.sectionTitle}>Permisos</Text>
-
-        {Object.keys(permissions).map((key) => {
-          const k = key as keyof typeof permissions;
-
-          return (
-            <View key={key} style={styles.permissionBox}>
-              <Text>{key}</Text>
-              <Switch
-                value={permissions[k]}
-                onValueChange={() => togglePermission(k)}
-              />
-            </View>
-          );
-        })}
+        <Text style={styles.sectionTitle}>Permisos de acceso</Text>
+        <View style={styles.permissionsCard}>
+          {Object.keys(permissions).map((key) => {
+            const k = key as keyof typeof permissions;
+            return (
+              <View key={key} style={styles.permissionRow}>
+                <View style={styles.permissionInfo}>
+                  <Ionicons
+                    name={permissions[k] ? "checkmark-circle" : "close-circle"}
+                    size={22}
+                    color={permissions[k] ? "#2E7D32" : "#c62828"}
+                  />
+                  <Text style={styles.permissionText}>{key}</Text>
+                </View>
+                <Switch
+                  value={permissions[k]}
+                  onValueChange={() => togglePermission(k)}
+                  trackColor={{ false: "#ccc", true: "#A5D6A7" }}
+                  thumbColor={permissions[k] ? "#2E7D32" : "#f4f3f4"}
+                />
+              </View>
+            );
+          })}
+        </View>
 
         {/* REGISTROS */}
-        <Text style={styles.sectionTitle}>Registros reales</Text>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Registros recientes</Text>
+          <Text style={styles.count}>{records.length} registros</Text>
+        </View>
 
         <View style={styles.grid}>
-          {records.map((r) => (
-            <TouchableOpacity
-              key={r.id}
-              style={styles.cardWrapper}
-              onPress={() => setSelected(r)}
-            >
-              <Card style={styles.card}>
-                <Text style={styles.cardTitle}>
-                  Cliente: {r.form?.cliente}
-                </Text>
+          {records.length > 0 ? (
+            records.map((r) => (
+              <TouchableOpacity
+                key={r.id}
+                style={styles.cardWrapper}
+                onPress={() => setSelected(r)}
+              >
+                <Card style={styles.card}>
+                  <View style={styles.cardHeader}>
+                    <Text style={styles.cardTitle} numberOfLines={1}>
+                      {r.form?.cliente || "Sin cliente"}
+                    </Text>
+                    {getStatusBadge(r.status)}
+                  </View>
 
-                <Text>Status: {r.status}</Text>
-                <Text style={styles.meta}>{r.createdAt}</Text>
-              </Card>
-            </TouchableOpacity>
-          ))}
+                  <Text style={styles.cardSubtitle}>
+                    {r.form?.tipoServicio || "Servicio no especificado"}
+                  </Text>
+
+                  <View style={styles.cardFooter}>
+                    <Text style={styles.meta}>{r.createdAt}</Text>
+                    <Ionicons name="chevron-forward" size={18} color="#999" />
+                  </View>
+                </Card>
+              </TouchableOpacity>
+            ))
+          ) : (
+            <View style={styles.emptyState}>
+              <Ionicons name="document-outline" size={48} color="#ccc" />
+              <Text style={styles.emptyText}>No hay registros aún</Text>
+            </View>
+          )}
         </View>
       </ScrollView>
 
-      {/* MODAL CREAR USUARIO */}
-      <Modal visible={modal} transparent animationType="slide">
+      {/* MODAL: CREAR USUARIO */}
+      <Modal visible={modal} transparent animationType="fade">
         <View style={styles.overlay}>
-          <View style={styles.modal}>
-
-            <Text style={styles.modalTitle}>Nuevo usuario</Text>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Crear nuevo usuario</Text>
 
             <TextInput
-              placeholder="Nombre"
+              placeholder="Nombre completo"
               placeholderTextColor="#999"
               value={form.name}
               onChangeText={(t) => setForm({ ...form, name: t })}
               style={styles.input}
             />
 
-            {/* 👇 SELECTOR SIMPLE */}
-            <View style={{ flexDirection: "row", gap: 10 }}>
-              <TouchableOpacity
-                style={[
-                  styles.roleBtn,
-                  form.role === "cliente" && styles.roleActive,
-                ]}
-                onPress={() => setForm({ ...form, role: "cliente" })}
-              >
-                <Text>Cliente</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.roleBtn,
-                  form.role === "supervisor" && styles.roleActive,
-                ]}
-                onPress={() => setForm({ ...form, role: "supervisor" })}
-              >
-                <Text>Supervisor</Text>
-              </TouchableOpacity>
+            <Text style={styles.label}>Tipo de usuario</Text>
+            <View style={styles.roleRow}>
+              {["cliente", "supervisor"].map((role) => (
+                <TouchableOpacity
+                  key={role}
+                  style={[
+                    styles.roleBtn,
+                    form.role === role && styles.roleActive,
+                  ]}
+                  onPress={() => setForm({ ...form, role })}
+                >
+                  <Text
+                    style={
+                      form.role === role
+                        ? styles.roleActiveText
+                        : styles.roleText
+                    }
+                  >
+                    {role === "cliente" ? "Cliente" : "Supervisor"}
+                  </Text>
+                </TouchableOpacity>
+              ))}
             </View>
 
-            <TouchableOpacity style={styles.btn} onPress={createUser}>
-              <Text style={styles.btnText}>Guardar</Text>
+            <TouchableOpacity style={styles.primaryBtn} onPress={createUser}>
+              <Text style={styles.primaryBtnText}>Guardar usuario</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={() => setModal(false)}>
-              <Text style={styles.cancel}>Cancelar</Text>
+            <TouchableOpacity
+              onPress={() => setModal(false)}
+              style={{ marginTop: 12 }}
+            >
+              <Text style={styles.cancelText}>Cancelar</Text>
             </TouchableOpacity>
-
           </View>
         </View>
       </Modal>
 
-      {/* MODAL DETALLE + MAPA */}
+      {/* MODAL: DETALLE DEL REGISTRO */}
       <Modal visible={!!selected} animationType="slide">
-        <ScrollView style={styles.detail}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: "#F1F8E9" }}>
+          <ScrollView style={styles.detailContainer}>
+            <View style={styles.detailHeader}>
+              <Text style={styles.detailTitle}>Detalle del Registro</Text>
+              <TouchableOpacity onPress={() => setSelected(null)}>
+                <Ionicons name="close" size={28} color="#333" />
+              </TouchableOpacity>
+            </View>
 
-          <Text style={styles.detailTitle}>Detalle del Registro</Text>
+            {selected && (
+              <>
+                {/* Info general */}
+                <View style={styles.infoCard}>
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>Cliente</Text>
+                    <Text style={styles.infoValue}>
+                      {selected.form?.cliente}
+                    </Text>
+                  </View>
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>Servicio</Text>
+                    <Text style={styles.infoValue}>
+                      {selected.form?.tipoServicio}
+                    </Text>
+                  </View>
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>Área</Text>
+                    <Text style={styles.infoValue}>{selected.form?.area}</Text>
+                  </View>
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>Fecha</Text>
+                    <Text style={styles.infoValue}>{selected.createdAt}</Text>
+                  </View>
+                </View>
 
-          {selected && (
-  <>
-    <View style={styles.section}>
-      <Text style={styles.sectionTitleBig}>Detalle del Registro</Text>
+                {/* GPS */}
+                {selected?.boxes &&
+                  Object.keys(selected.boxes).map((k) => {
+                    const box = selected.boxes[k];
+                    if (!box?.estadoEncontrado?.gps) return null;
 
-      <View style={styles.detailBox}>
-        <Text style={styles.label}>Cliente</Text>
-        <Text style={styles.value}>{selected.form?.cliente}</Text>
-      </View>
+                    return (
+                      <View key={k} style={styles.gpsCard}>
+                        <Text style={styles.gpsTitle}>Ubicación GPS</Text>
+                        <Text>Lat: {box.estadoEncontrado.gps.latitude}</Text>
+                        <Text>Lon: {box.estadoEncontrado.gps.longitude}</Text>
+                        <TouchableOpacity
+                          style={styles.mapButton}
+                          onPress={() =>
+                            openGoogleMaps(
+                              box.estadoEncontrado.gps.latitude,
+                              box.estadoEncontrado.gps.longitude,
+                            )
+                          }
+                        >
+                          <Ionicons name="map-outline" size={18} color="#fff" />
+                          <Text style={styles.mapButtonText}>
+                            Abrir en Google Maps
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  })}
 
-      <View style={styles.detailBox}>
-        <Text style={styles.label}>Servicio</Text>
-        <Text style={styles.value}>{selected.form?.tipoServicio}</Text>
-      </View>
+                {/* Fotos */}
+                {selected.boxes &&
+                  Object.keys(selected.boxes).map((k) => {
+                    const box = selected.boxes[k];
+                    return (
+                      <View key={k} style={styles.stationCard}>
+                        <Text style={styles.stationTitle}>{box.name}</Text>
 
-      <View style={styles.detailBox}>
-        <Text style={styles.label}>Área</Text>
-        <Text style={styles.value}>{selected.form?.area}</Text>
-      </View>
-
-      <View style={styles.detailBox}>
-        <Text style={styles.label}>Fecha</Text>
-        <Text style={styles.value}>{selected.createdAt}</Text>
-      </View>
-    </View>
-
-    {/* MAPA GPS */}
-    {selected?.boxes &&
-      Object.keys(selected.boxes).map((k) => {
-        const box = selected.boxes[k];
-
-        if (!box?.estadoEncontrado?.gps) return null;
-
-        return (
-          <View key={k} style={styles.gpsBox}>
-            <Text style={styles.subTitle}>Ubicación registrada</Text>
-
-            <Text style={styles.value}>
-              Latitud: {box.estadoEncontrado.gps.latitude}
-            </Text>
-
-            <Text style={styles.value}>
-              Longitud: {box.estadoEncontrado.gps.longitude}
-            </Text>
+                        {box.estadoEncontrado?.uri && (
+                          <View style={styles.photoSection}>
+                            <Text style={styles.photoLabel}>
+                              Estado encontrado
+                            </Text>
+                            <Image
+                              source={{ uri: box.estadoEncontrado.uri }}
+                              style={styles.photo}
+                            />
+                          </View>
+                        )}
+                        {box.estadoFinal?.uri && (
+                          <View style={styles.photoSection}>
+                            <Text style={styles.photoLabel}>Estado final</Text>
+                            <Image
+                              source={{ uri: box.estadoFinal.uri }}
+                              style={styles.photo}
+                            />
+                          </View>
+                        )}
+                        {box.fichaFirmada?.uri && (
+                          <View style={styles.photoSection}>
+                            <Text style={styles.photoLabel}>Ficha firmada</Text>
+                            <Image
+                              source={{ uri: box.fichaFirmada.uri }}
+                              style={styles.photo}
+                            />
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })}
+              </>
+            )}
 
             <TouchableOpacity
-              style={styles.mapBtn}
-              onPress={() =>
-                openGoogleMaps(
-                  box.estadoEncontrado.gps.latitude,
-                  box.estadoEncontrado.gps.longitude
-                )
-              }
+              style={styles.closeButton}
+              onPress={() => setSelected(null)}
             >
-              <Text style={styles.mapBtnText}>Abrir en Google Maps</Text>
+              <Text style={styles.closeButtonText}>Cerrar</Text>
             </TouchableOpacity>
-          </View>
-        );
-      })}
-
-    {/* FOTOS */}
-    {selected.boxes &&
-      Object.keys(selected.boxes).map((k) => {
-        const box = selected.boxes[k];
-
-        return (
-          <View key={k} style={styles.stationCard}>
-            <Text style={styles.stationTitle}>{box.name}</Text>
-
-            {box.estadoEncontrado?.uri && (
-  <View style={styles.photoBlock}>
-    <Text style={styles.photoLabel}>Estado encontrado</Text>
-
-    <Image source={{ uri: box.estadoEncontrado.uri }} style={styles.img} />
-
-    <Text style={styles.photoDate}>
-      {box.estadoEncontrado.createdAt || "Sin fecha"}
-    </Text>
-  </View>
-)}
-
-{box.estadoFinal?.uri && (
-  <View style={styles.photoBlock}>
-    <Text style={styles.photoLabel}>Estado final</Text>
-
-    <Image source={{ uri: box.estadoFinal.uri }} style={styles.img} />
-
-    <Text style={styles.photoDate}>
-      {box.estadoFinal.createdAt || "Sin fecha"}
-    </Text>
-  </View>
-)}
-
-{box.fichaFirmada?.uri && (
-  <View style={styles.photoBlock}>
-    <Text style={styles.photoLabel}>Ficha física firmada</Text>
-
-    <Image source={{ uri: box.fichaFirmada.uri }} style={styles.img} />
-
-    <Text style={styles.photoDate}>
-      {box.fichaFirmada.createdAt || "Sin fecha"}
-    </Text>
-  </View>
-)}
-          </View>
-        );
-      })}
-  </>
-)}
-
-          <TouchableOpacity
-            style={styles.closeBtn}
-            onPress={() => setSelected(null)}
-          >
-            <Text style={{ color: "#fff" }}>Cerrar</Text>
-          </TouchableOpacity>
-
-        </ScrollView>
+          </ScrollView>
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );
 }
 
-/* STYLES */
+/* ==================== ESTILOS ==================== */
 const styles = StyleSheet.create({
-  container: { padding: 15, backgroundColor: "#fff" },
-section: {
-  backgroundColor: "#fff",
-  padding: 15,
-  borderRadius: 12,
-  marginTop: 10,
-  borderWidth: 1,
-  borderColor: "#eee",
-},
+  safeArea: { flex: 1, backgroundColor: "#F1F8E9" },
+  container: { padding: 20, paddingBottom: 40 },
 
-sectionTitleBig: {
-  fontSize: 20,
-  fontWeight: "bold",
-  marginBottom: 10,
-},
-
-detailBox: {
-  marginBottom: 12,
-  paddingBottom: 8,
-  borderBottomWidth: 1,
-  borderBottomColor: "#f0f0f0",
-},
-
-label: {
-  fontSize: 14,
-  color: "#777",
-  marginBottom: 3,
-},
-
-value: {
-  fontSize: 16,
-  color: "#111",
-  fontWeight: "500",
-},
-
-subTitle: {
-  fontSize: 16,
-  fontWeight: "600",
-  marginBottom: 8,
-},
-
-gpsBox: {
-  backgroundColor: "#fafafa",
-  padding: 15,
-  borderRadius: 12,
-  marginTop: 10,
-  borderWidth: 1,
-  borderColor: "#eee",
-},
-
-mapBtn: {
-  marginTop: 10,
-  backgroundColor: "#2E7D32",
-  padding: 10,
-  borderRadius: 8,
-  alignItems: "center",
-},
-
-mapBtnText: {
-  color: "#fff",
-  fontWeight: "600",
-},
-photoDate: {
-  marginTop: 6,
-  fontSize: 12,
-  color: "#777",
-},
-stationCard: {
-  backgroundColor: "#fff",
-  padding: 15,
-  borderRadius: 12,
-  marginTop: 12,
-  borderWidth: 1,
-  borderColor: "#eee",
-},
-
-stationTitle: {
-  fontWeight: "bold",
-  fontSize: 16,
-  marginBottom: 10,
-},
-
-photoBlock: {
-  marginBottom: 12,
-},
-
-photoLabel: {
-  fontSize: 14,
-  color: "#555",
-  marginBottom: 5,
-},
-
-img: {
-  width: "100%",
-  height: 180,
-  borderRadius: 10,
-},
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 24,
   },
+  title: { fontSize: 26, fontWeight: "800", color: "#1B5E20" },
+  subtitle: { color: "#555", fontSize: 15, marginTop: 2 },
 
-  title: { fontSize: 22, fontWeight: "bold" },
-  logout: { color: "red", fontWeight: "bold" },
-
-  subtitle: { color: "#666", marginBottom: 10 },
+  logoutBtn: { flexDirection: "row", alignItems: "center", gap: 6 },
+  logoutText: { color: "#c62828", fontWeight: "600" },
 
   statsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 10,
+    gap: 12,
+    marginBottom: 24,
   },
-
-  statBox: {
-    width: "48%",
+  statCard: {
+    width: "47%",
     backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#eee",
-    padding: 15,
-    borderRadius: 12,
+    borderRadius: 16,
+    padding: 16,
+    borderLeftWidth: 5,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 3,
   },
+  statLabel: { fontSize: 13, color: "#666", marginTop: 6 },
+  statNumber: { fontSize: 26, fontWeight: "800", color: "#222", marginTop: 2 },
 
-  statNumber: { fontSize: 18, fontWeight: "bold" },
-
-  btn: {
+  primaryBtn: {
     backgroundColor: "#2E7D32",
-    padding: 12,
-    borderRadius: 10,
-    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 14,
+    borderRadius: 14,
+    marginBottom: 24,
+    shadowColor: "#2E7D32",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 5,
   },
-
-  btnText: { color: "#fff", textAlign: "center" },
+  primaryBtnText: { color: "#fff", fontSize: 16, fontWeight: "700" },
 
   sectionTitle: {
     fontSize: 18,
-    fontWeight: "bold",
-    marginTop: 15,
+    fontWeight: "700",
+    color: "#1B5E20",
+    marginBottom: 12,
   },
 
-  grid: {
+  permissionsCard: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 8,
+    marginBottom: 24,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  permissionRow: {
     flexDirection: "row",
-    flexWrap: "wrap",
     justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f0f0f0",
   },
+  permissionInfo: { flexDirection: "row", alignItems: "center", gap: 10 },
+  permissionText: { fontSize: 15, color: "#333" },
 
-  cardWrapper: {
-    width: "48%",
+  sectionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
   },
+  count: { color: "#666", fontSize: 14 },
 
+  grid: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
+
+  cardWrapper: { width: "47%" },
   card: {
     backgroundColor: "#fff",
-    padding: 12,
-    borderRadius: 12,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: "#eee",
+    borderRadius: 16,
+    padding: 14,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 3,
   },
-
-  cardTitle: { fontWeight: "bold" },
-  meta: { fontSize: 12, color: "#666" },
-
-  permissionBox: {
+  cardHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
-    padding: 10,
-    borderWidth: 1,
-    borderColor: "#eee",
-    borderRadius: 10,
+    alignItems: "center",
     marginBottom: 8,
   },
+  cardTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#222",
+    flex: 1,
+    marginRight: 8,
+  },
+  cardSubtitle: { color: "#555", fontSize: 13, marginBottom: 12 },
+  cardFooter: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  meta: { fontSize: 12, color: "#888" },
 
+  badge: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 20 },
+  badgeGreen: { backgroundColor: "#C8E6C9" },
+  badgeOrange: { backgroundColor: "#FFE0B2" },
+  badgeText: { fontSize: 11, fontWeight: "700" },
+
+  emptyState: { alignItems: "center", paddingVertical: 40 },
+  emptyText: { color: "#999", marginTop: 12 },
+
+  // Modales
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.4)",
+    backgroundColor: "rgba(0,0,0,0.5)",
     justifyContent: "center",
     padding: 20,
   },
+  modalContent: { backgroundColor: "#fff", borderRadius: 20, padding: 24 },
 
-  modal: {
-    backgroundColor: "#fff",
-    padding: 20,
-    borderRadius: 15,
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    marginBottom: 20,
+    color: "#1B5E20",
   },
-
-  modalTitle: { fontSize: 18, fontWeight: "bold" },
-
   input: {
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: "#ddd",
-    padding: 10,
-    borderRadius: 10,
-    marginBottom: 10,
+    borderRadius: 12,
+    padding: 14,
+    fontSize: 16,
+    marginBottom: 16,
   },
-
-  cancel: { textAlign: "center", marginTop: 10, color: "red" },
-
+  label: { fontSize: 14, color: "#555", marginBottom: 8 },
+  roleRow: { flexDirection: "row", gap: 10, marginBottom: 20 },
   roleBtn: {
     flex: 1,
-    padding: 10,
-    borderWidth: 1,
+    padding: 12,
+    borderWidth: 1.5,
     borderColor: "#ddd",
-    borderRadius: 10,
+    borderRadius: 12,
     alignItems: "center",
   },
+  roleActive: { backgroundColor: "#C8E6C9", borderColor: "#2E7D32" },
+  roleText: { color: "#555" },
+  roleActiveText: { color: "#1B5E20", fontWeight: "600" },
+  cancelText: { textAlign: "center", color: "#c62828", fontWeight: "600" },
 
-  roleActive: {
-    backgroundColor: "#c8e6c9",
+  // Detalle
+  detailContainer: { padding: 20 },
+  detailHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 20,
   },
+  detailTitle: { fontSize: 22, fontWeight: "800", color: "#1B5E20" },
 
-  detail: { padding: 15 },
-
-  detailTitle: { fontSize: 20, fontWeight: "bold" },
-
-  section: {
+  infoCard: {
     backgroundColor: "#fff",
-    padding: 10,
-    borderRadius: 10,
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: "#eee",
+    borderRadius: 16,
+    padding: 18,
+    marginBottom: 20,
   },
+  infoRow: { marginBottom: 14 },
+  infoLabel: { fontSize: 13, color: "#666", marginBottom: 4 },
+  infoValue: { fontSize: 16, fontWeight: "600", color: "#222" },
+
+  gpsCard: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 18,
+    marginBottom: 16,
+  },
+  gpsTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    marginBottom: 10,
+    color: "#1565C0",
+  },
+
+  mapButton: {
+    marginTop: 12,
+    backgroundColor: "#2E7D32",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
+    borderRadius: 12,
+    gap: 8,
+  },
+  mapButtonText: { color: "#fff", fontWeight: "700" },
 
   stationCard: {
     backgroundColor: "#fff",
-    padding: 10,
-    borderRadius: 10,
-    marginTop: 10,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
   },
-
-  stationTitle: { fontWeight: "bold" },
-
-  img: { width: "100%", height: 160, borderRadius: 10, marginTop: 5 },
-
-  mapBox: {
-    marginTop: 10,
+  stationTitle: { fontSize: 17, fontWeight: "700", marginBottom: 12 },
+  photoSection: { marginBottom: 16 },
+  photoLabel: {
+    fontSize: 14,
+    color: "#555",
+    marginBottom: 6,
+    fontWeight: "600",
   },
+  photo: { width: "100%", height: 180, borderRadius: 12 },
 
-  map: {
-    width: "100%",
-    height: 200,
-    borderRadius: 10,
-  },
-
-  closeBtn: {
-    backgroundColor: "#111",
-    padding: 12,
-    borderRadius: 10,
-    marginTop: 15,
+  closeButton: {
+    backgroundColor: "#333",
+    paddingVertical: 14,
+    borderRadius: 14,
     alignItems: "center",
+    marginTop: 10,
+    marginBottom: 40,
   },
+  closeButtonText: { color: "#fff", fontSize: 16, fontWeight: "700" },
 });
