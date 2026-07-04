@@ -1,4 +1,4 @@
-import { getRecords } from "@/utils/storage";
+import { getRecordsAppwrite } from "@/utils/appwriteRecords";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
@@ -20,6 +20,60 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 const screenWidth = Dimensions.get("window").width;
 
+const APPWRITE_ENDPOINT = "https://nyc.cloud.appwrite.io/v1";
+const APPWRITE_PROJECT_ID = "6a46e8b90028a108e50f";
+const APPWRITE_BUCKET_ID = "photos";
+
+const parseJsonField = (value: any, fallback: any) => {
+  if (value === undefined || value === null || value === "") return fallback;
+  if (typeof value !== "string") return value;
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+};
+
+const normalizeRecord = (record: any) => {
+  const boxes = parseJsonField(record.boxes, {});
+  const stations = parseJsonField(record.stations, []);
+
+  const form = parseJsonField(record.form, {
+    cliente: record.cliente ?? "",
+    tipoServicio: record.tipoServicio ?? "",
+    tipoEstacionPrincipal: record.tipoEstacionPrincipal ?? "",
+    detalleEstacion: record.detalleEstacion ?? "",
+    area: record.area ?? "",
+    observaciones: record.observaciones ?? "",
+    cantidadEstaciones: record.cantidadEstaciones ?? "",
+  });
+
+  return {
+    ...record,
+    id: record.localId ?? record.id ?? record.$id,
+    appwriteId: record.$id,
+    form,
+    boxes,
+    stations:
+      Array.isArray(stations) && stations.length > 0
+        ? stations
+        : Object.values(boxes || {}),
+    status: record.status ?? "pendiente",
+    createdAt: record.createdAt ?? record.$createdAt ?? "",
+  };
+};
+
+const getStationsFromRecord = (record: any) => {
+  if (!record) return [];
+
+  const stations = parseJsonField(record.stations, []);
+  if (Array.isArray(stations) && stations.length > 0) return stations;
+
+  const boxes = parseJsonField(record.boxes, {});
+  return Object.values(boxes || {});
+};
+
 export default function Admin() {
   const router = useRouter();
 
@@ -40,12 +94,35 @@ export default function Admin() {
     verDatos: true,
   });
 
+  const loadRecords = async () => {
+    try {
+      console.log("🔄 Cargando registros desde Appwrite...");
+
+      const data = await getRecordsAppwrite();
+
+      const normalizedRecords = (data || []).map(normalizeRecord);
+
+      console.log("✅ Registros normalizados:", normalizedRecords.length);
+
+      if (normalizedRecords.length > 0) {
+        console.log(
+          "📋 Primer registro normalizado:",
+          JSON.stringify(normalizedRecords[0], null, 2),
+        );
+      }
+
+      setRecords(normalizedRecords);
+    } catch (error) {
+      console.log("❌ Error al cargar registros desde Appwrite:", error);
+    }
+  };
+
   useEffect(() => {
-    const load = async () => {
-      const data = await getRecords();
-      setRecords((data || []).reverse());
-    };
-    load();
+    loadRecords();
+
+    const interval = setInterval(loadRecords, 8000);
+
+    return () => clearInterval(interval);
   }, []);
 
   const createUser = () => {
@@ -85,6 +162,26 @@ export default function Admin() {
         </Text>
       </View>
     );
+  };
+  const getPhotoUrl = (photoData: any) => {
+    if (!photoData) return null;
+
+    if (typeof photoData === "string") {
+      return photoData.startsWith("http") ? photoData : null;
+    }
+
+    if (photoData.uri && photoData.uri.startsWith("http")) {
+      return photoData.uri;
+    }
+
+    const fileId =
+      photoData.appwriteId || photoData.fileId || photoData.$id || photoData.id;
+
+    if (fileId) {
+      return `${APPWRITE_ENDPOINT}/storage/buckets/${APPWRITE_BUCKET_ID}/files/${fileId}/view?project=${APPWRITE_PROJECT_ID}`;
+    }
+
+    return null;
   };
 
   return (
@@ -140,7 +237,25 @@ export default function Admin() {
             <Text style={styles.statNumber}>{pendientes}</Text>
           </View>
         </View>
-
+        <TouchableOpacity
+          style={{
+            backgroundColor: "#1565C0",
+            paddingVertical: 12,
+            paddingHorizontal: 20,
+            borderRadius: 12,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "center",
+            marginBottom: 20,
+            gap: 8,
+          }}
+          onPress={loadRecords}
+        >
+          <Ionicons name="refresh-outline" size={22} color="#fff" />
+          <Text style={{ color: "#fff", fontWeight: "700", fontSize: 16 }}>
+            Actualizar Registros
+          </Text>
+        </TouchableOpacity>
         {/* BOTÓN CREAR USUARIO */}
         <TouchableOpacity
           style={styles.primaryBtn}
@@ -191,7 +306,7 @@ export default function Admin() {
           {records.length > 0 ? (
             records.map((r) => (
               <TouchableOpacity
-                key={r.id}
+                key={String(r.appwriteId || r.id)}
                 style={styles.cardWrapper}
                 onPress={() => setSelected(r)}
               >
@@ -342,45 +457,40 @@ export default function Admin() {
                   })}
 
                 {/* Fotos */}
-                {selected.boxes &&
-                  Object.keys(selected.boxes).map((k) => {
-                    const box = selected.boxes[k];
-                    return (
-                      <View key={k} style={styles.stationCard}>
-                        <Text style={styles.stationTitle}>{box.name}</Text>
+                {getStationsFromRecord(selected).map(
+                  (station: any, index: number) => (
+                    <View key={index} style={styles.stationCard}>
+                      <Text style={styles.stationTitle}>
+                        Estación {station.numero || index + 1} -{" "}
+                        {station.ubicacion || ""}
+                      </Text>
 
-                        {box.estadoEncontrado?.uri && (
-                          <View style={styles.photoSection}>
-                            <Text style={styles.photoLabel}>
-                              Estado encontrado
-                            </Text>
-                            <Image
-                              source={{ uri: box.estadoEncontrado.uri }}
-                              style={styles.photo}
-                            />
-                          </View>
-                        )}
-                        {box.estadoFinal?.uri && (
-                          <View style={styles.photoSection}>
-                            <Text style={styles.photoLabel}>Estado final</Text>
-                            <Image
-                              source={{ uri: box.estadoFinal.uri }}
-                              style={styles.photo}
-                            />
-                          </View>
-                        )}
-                        {box.fichaFirmada?.uri && (
-                          <View style={styles.photoSection}>
-                            <Text style={styles.photoLabel}>Ficha firmada</Text>
-                            <Image
-                              source={{ uri: box.fichaFirmada.uri }}
-                              style={styles.photo}
-                            />
-                          </View>
-                        )}
-                      </View>
-                    );
-                  })}
+                      {["estadoEncontrado", "estadoFinal", "formatoFisico"].map(
+                        (type) => {
+                          const photo = station[type];
+                          const photoUrl = getPhotoUrl(photo);
+                          if (!photoUrl) return null;
+
+                          return (
+                            <View key={type} style={styles.photoSection}>
+                              <Text style={styles.photoLabel}>
+                                {type === "estadoEncontrado"
+                                  ? "Estado Encontrado"
+                                  : type === "estadoFinal"
+                                    ? "Estado Final"
+                                    : "Formato Físico"}
+                              </Text>
+                              <Image
+                                source={{ uri: photoUrl }}
+                                style={styles.photo}
+                              />
+                            </View>
+                          );
+                        },
+                      )}
+                    </View>
+                  ),
+                )}
               </>
             )}
 

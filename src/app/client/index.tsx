@@ -1,5 +1,8 @@
+import {
+  getRecordsAppwrite,
+  saveIncidentAppwrite,
+} from "@/utils/appwriteRecords";
 import { Ionicons } from "@expo/vector-icons";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
 import {
@@ -21,7 +24,11 @@ type GPSData = {
 };
 
 type PhotoData = {
-  uri: string;
+  uri?: string;
+  appwriteId?: string;
+  fileId?: string;
+  id?: string;
+  $id?: string;
   gps?: GPSData | null;
   createdAt?: string;
 };
@@ -90,12 +97,57 @@ type IncidentRecord = {
 
 type ViewMode = "home" | "evidencias" | "incidencia";
 
-const INCIDENTS_STORAGE_KEY = "enviroclean_client_incidents_v1";
-
 const PHOTO_LABELS: Record<PhotoKey, string> = {
   estadoEncontrado: "Foto del estado en el que se encontró la estación",
   estadoFinal: "Foto del estado en el que se dejó la estación",
   formatoFisico: "Foto de formato físico llenado por el operario",
+};
+
+const APPWRITE_ENDPOINT = "https://nyc.cloud.appwrite.io/v1";
+const APPWRITE_PROJECT_ID = "6a46e8b90028a108e50f";
+const APPWRITE_BUCKET_ID = "photos";
+
+const parseJsonField = (value: any, fallback: any) => {
+  if (value === undefined || value === null || value === "") return fallback;
+  if (typeof value !== "string") return value;
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+};
+
+const getPhotoUrl = (photoData: any) => {
+  if (!photoData) return undefined;
+
+  if (typeof photoData === "string") {
+    return photoData.startsWith("http") ? photoData : undefined;
+  }
+
+  if (photoData.uri && photoData.uri.startsWith("http")) {
+    return photoData.uri;
+  }
+
+  const fileId =
+    photoData.appwriteId || photoData.fileId || photoData.$id || photoData.id;
+
+  if (fileId) {
+    return `${APPWRITE_ENDPOINT}/storage/buckets/${APPWRITE_BUCKET_ID}/files/${fileId}/view?project=${APPWRITE_PROJECT_ID}`;
+  }
+
+  return undefined;
+};
+
+const normalizePhoto = (photo: any): PhotoData | null => {
+  if (!photo) return null;
+
+  return {
+    ...photo,
+    uri: getPhotoUrl(photo),
+    gps: photo.gps ?? null,
+    createdAt: photo.createdAt ?? "",
+  };
 };
 
 export default function Client() {
@@ -136,169 +188,68 @@ export default function Client() {
     }).format(new Date());
   };
 
-  const isServiceRecord = (item: any): item is ServiceRecord => {
-    return (
-      item &&
-      typeof item === "object" &&
-      item.id !== undefined &&
-      item.form &&
-      (item.stations || item.boxes) &&
-      item.createdAt
-    );
-  };
-
-  const parsePossibleJson = (value: any) => {
-    if (typeof value !== "string") return value;
-
-    try {
-      return JSON.parse(value);
-    } catch {
-      return value;
-    }
-  };
-
-  const normalizeCloudRecord = (item: any): ServiceRecord | null => {
-    try {
-      const possiblePayload =
-        item?.record || item?.payload || item?.data || item?.json || item;
-
-      const parsed = parsePossibleJson(possiblePayload);
-
-      if (!parsed || typeof parsed !== "object") return null;
-
-      const normalized = {
-        ...parsed,
-        id: parsed.id ?? item?.$id ?? Date.now(),
-        appwriteId: item?.$id,
-      };
-
-      return isServiceRecord(normalized) ? normalized : null;
-    } catch {
-      return null;
-    }
-  };
-
-  const getLocalRecords = async (): Promise<ServiceRecord[]> => {
-    try {
-      const keys = await AsyncStorage.getAllKeys();
-      const values = await AsyncStorage.multiGet(keys);
-
-      const foundRecords: ServiceRecord[] = [];
-
-      values.forEach(([, value]) => {
-        if (!value) return;
-
-        try {
-          const parsed = JSON.parse(value);
-
-          if (Array.isArray(parsed)) {
-            parsed.forEach((item) => {
-              if (isServiceRecord(item)) foundRecords.push(item);
-            });
-            return;
-          }
-
-          if (Array.isArray(parsed?.records)) {
-            parsed.records.forEach((item: any) => {
-              if (isServiceRecord(item)) foundRecords.push(item);
-            });
-            return;
-          }
-
-          if (isServiceRecord(parsed)) {
-            foundRecords.push(parsed);
-          }
-        } catch {
-          // Ignora claves de AsyncStorage que no sean JSON de registros.
-        }
-      });
-
-      return foundRecords;
-    } catch (error) {
-      console.log("Error leyendo registros locales:", error);
-      return [];
-    }
-  };
-
-  const getCloudRecords = async (): Promise<ServiceRecord[]> => {
-    try {
-      const appwriteModule: any = await import("@/utils/appwriteRecords");
-
-      const cloudFunction =
-        appwriteModule.getRecordsAppwrite ||
-        appwriteModule.listRecordsAppwrite ||
-        appwriteModule.getAllRecordsAppwrite;
-
-      if (!cloudFunction) return [];
-
-      const response = await cloudFunction();
-
-      const rawRecords = Array.isArray(response)
-        ? response
-        : Array.isArray(response?.documents)
-          ? response.documents
-          : [];
-
-      return rawRecords
-        .map((item: any) => normalizeCloudRecord(item))
-        .filter(Boolean) as ServiceRecord[];
-    } catch (error) {
-      console.log("No se pudieron cargar registros desde Appwrite:", error);
-      return [];
-    }
-  };
-
-  const removeDuplicatedRecords = (items: ServiceRecord[]) => {
-    const map = new Map<string, ServiceRecord>();
-
-    items.forEach((item) => {
-      const key = String(item.id ?? item.appwriteId);
-      if (!map.has(key)) map.set(key, item);
-    });
-
-    return Array.from(map.values()).sort((a, b) => {
-      const dateA = Number(a.id) || 0;
-      const dateB = Number(b.id) || 0;
-      return dateB - dateA;
-    });
-  };
-
   const loadRecords = async () => {
     setLoading(true);
 
     try {
-      const [localRecords, cloudRecords] = await Promise.all([
-        getLocalRecords(),
-        getCloudRecords(),
-      ]);
+      const appwriteRecords = await getRecordsAppwrite();
 
-      const allRecords = removeDuplicatedRecords([
-        ...cloudRecords,
-        ...localRecords,
-      ]);
+      const normalizedRecords: ServiceRecord[] = (appwriteRecords || []).map(
+        (record: any) => {
+          const boxes = parseJsonField(record.boxes, {});
+          const stations = parseJsonField(record.stations, []);
 
-      setRecords(allRecords);
+          return {
+            ...record,
+            id: record.id ?? record.appwriteId ?? record.$id,
+            appwriteId: record.appwriteId ?? record.$id,
+            form: record.form ?? {
+              cliente: record.cliente ?? "",
+              tipoServicio: record.tipoServicio ?? "",
+              tipoEstacionPrincipal: record.tipoEstacionPrincipal ?? "",
+              detalleEstacion: record.detalleEstacion ?? "",
+              area: record.area ?? "",
+              observaciones: record.observaciones ?? "",
+              cantidadEstaciones: record.cantidadEstaciones ?? "",
+            },
+            boxes,
+            stations:
+              Array.isArray(stations) && stations.length > 0
+                ? stations
+                : Object.values(boxes || {}),
+            status: record.status ?? "pendiente",
+            createdAt: record.createdAt ?? record.$createdAt ?? "",
+          };
+        },
+      );
 
-      if (!selectedIncidentRecordId && allRecords.length > 0) {
-        setSelectedIncidentRecordId(String(allRecords[0].id));
+      setRecords(normalizedRecords);
+
+      if (!selectedIncidentRecordId && normalizedRecords.length > 0) {
+        setSelectedIncidentRecordId(String(normalizedRecords[0].id));
       }
     } catch (error) {
-      console.log("Error cargando registros:", error);
-      Alert.alert("Error", "No se pudieron cargar los registros.");
+      console.log("Error cargando registros desde Appwrite:", error);
+      Alert.alert(
+        "Error",
+        "No se pudieron cargar los registros desde Appwrite.",
+      );
     } finally {
       setLoading(false);
     }
   };
 
   const normalizeStations = (record: ServiceRecord): NormalizedStation[] => {
-    if (Array.isArray(record.stations)) {
+    if (Array.isArray(record.stations) && record.stations.length > 0) {
       return record.stations.map((station, index) => ({
         id: station.id ?? `${record.id}-station-${index + 1}`,
         numero: station.numero || String(index + 1),
         ubicacion: station.ubicacion || station.name || record.form?.area || "",
-        estadoEncontrado: station.estadoEncontrado || null,
-        estadoFinal: station.estadoFinal || null,
-        formatoFisico: station.formatoFisico || station.fichaFirmada || null,
+        estadoEncontrado: normalizePhoto(station.estadoEncontrado),
+        estadoFinal: normalizePhoto(station.estadoFinal),
+        formatoFisico: normalizePhoto(
+          station.formatoFisico || station.fichaFirmada,
+        ),
       }));
     }
 
@@ -307,9 +258,11 @@ export default function Client() {
         id: station.id ?? key,
         numero: station.numero || String(index + 1),
         ubicacion: station.ubicacion || station.name || record.form?.area || "",
-        estadoEncontrado: station.estadoEncontrado || null,
-        estadoFinal: station.estadoFinal || null,
-        formatoFisico: station.formatoFisico || station.fichaFirmada || null,
+        estadoEncontrado: normalizePhoto(station.estadoEncontrado),
+        estadoFinal: normalizePhoto(station.estadoFinal),
+        formatoFisico: normalizePhoto(
+          station.formatoFisico || station.fichaFirmada,
+        ),
       }));
     }
 
@@ -350,7 +303,7 @@ export default function Client() {
       }
 
       copy[key] = {
-        recordId: record.id,
+        recordId: record.appwriteId || record.id,
         stationId: station.id,
         stationNumber: station.numero,
         stationLocation: station.ubicacion,
@@ -382,7 +335,8 @@ export default function Client() {
     try {
       const incident: IncidentRecord = {
         id: Date.now(),
-        recordId: selectedIncidentRecord.id,
+        recordId:
+          selectedIncidentRecord.appwriteId || selectedIncidentRecord.id,
         cliente: selectedIncidentRecord.form?.cliente,
         createdAt: getPeruDate(),
         status: "registrada",
@@ -390,35 +344,18 @@ export default function Client() {
         selectedItems,
       };
 
-      const previous = await AsyncStorage.getItem(INCIDENTS_STORAGE_KEY);
-      const incidents = previous ? JSON.parse(previous) : [];
-
-      await AsyncStorage.setItem(
-        INCIDENTS_STORAGE_KEY,
-        JSON.stringify([incident, ...incidents]),
-      );
-
-      try {
-        const appwriteModule: any = await import("@/utils/appwriteRecords");
-
-        const saveIncidentCloud =
-          appwriteModule.saveIncidentAppwrite ||
-          appwriteModule.createIncidentAppwrite;
-
-        if (saveIncidentCloud) {
-          await saveIncidentCloud(incident);
-        }
-      } catch (error) {
-        console.log("Incidencia guardada localmente. Appwrite no disponible.");
-      }
+      await saveIncidentAppwrite(incident);
 
       setSelectedNonConformities({});
       setIncidentObservation("");
 
       Alert.alert("Correcto", "Incidencia registrada correctamente.");
-    } catch (error) {
-      console.log("Error registrando incidencia:", error);
-      Alert.alert("Error", "No se pudo registrar la incidencia.");
+    } catch (error: any) {
+      console.log("Error registrando incidencia en Appwrite:", error);
+      Alert.alert(
+        "Error",
+        error?.message || "No se pudo registrar la incidencia en Appwrite.",
+      );
     }
   };
 
@@ -896,38 +833,47 @@ const RecordEvidenceCard = ({
           <InfoRow label="Detalle" value={record.form?.detalleEstacion} />
           <InfoRow label="Observaciones" value={record.form?.observaciones} />
 
-          {stations.map((station) => (
-            <View key={String(station.id)} style={styles.stationCard}>
-              <View style={styles.stationHeader}>
-                <View style={styles.stationBadge}>
-                  <Text style={styles.stationBadgeText}>
-                    Estación {station.numero}
+          {stations.length === 0 ? (
+            <View style={styles.noPhotoBox}>
+              <Ionicons name="alert-circle-outline" size={24} color="#aaa" />
+              <Text style={styles.noPhotoText}>
+                Este registro no tiene estaciones disponibles.
+              </Text>
+            </View>
+          ) : (
+            stations.map((station) => (
+              <View key={String(station.id)} style={styles.stationCard}>
+                <View style={styles.stationHeader}>
+                  <View style={styles.stationBadge}>
+                    <Text style={styles.stationBadgeText}>
+                      Estación {station.numero}
+                    </Text>
+                  </View>
+                  <Text style={styles.stationLocation}>
+                    {station.ubicacion || "Sin ubicación"}
                   </Text>
                 </View>
-                <Text style={styles.stationLocation}>
-                  {station.ubicacion || "Sin ubicación"}
-                </Text>
+
+                <EvidencePhotoItem
+                  label={PHOTO_LABELS.estadoEncontrado}
+                  data={station.estadoEncontrado}
+                  onPreview={() => onPreview(station.estadoEncontrado)}
+                />
+
+                <EvidencePhotoItem
+                  label={PHOTO_LABELS.estadoFinal}
+                  data={station.estadoFinal}
+                  onPreview={() => onPreview(station.estadoFinal)}
+                />
+
+                <EvidencePhotoItem
+                  label={PHOTO_LABELS.formatoFisico}
+                  data={station.formatoFisico}
+                  onPreview={() => onPreview(station.formatoFisico)}
+                />
               </View>
-
-              <EvidencePhotoItem
-                label={PHOTO_LABELS.estadoEncontrado}
-                data={station.estadoEncontrado}
-                onPreview={() => onPreview(station.estadoEncontrado)}
-              />
-
-              <EvidencePhotoItem
-                label={PHOTO_LABELS.estadoFinal}
-                data={station.estadoFinal}
-                onPreview={() => onPreview(station.estadoFinal)}
-              />
-
-              <EvidencePhotoItem
-                label={PHOTO_LABELS.formatoFisico}
-                data={station.formatoFisico}
-                onPreview={() => onPreview(station.formatoFisico)}
-              />
-            </View>
-          ))}
+            ))
+          )}
         </View>
       )}
     </View>
@@ -1499,12 +1445,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 8,
+    padding: 12,
   },
 
   noPhotoText: {
     color: "#888",
     fontSize: 13,
     marginTop: 6,
+    textAlign: "center",
   },
 
   recordSelectorList: {

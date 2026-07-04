@@ -17,7 +17,7 @@
     },
 
     "android": {
-      "package": "com.ander1106.EnviroCleanRegistro",
+      "package": "com.ander1106.envirocleanregistro",
 
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
@@ -26,10 +26,7 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
 
-      "permissions": [
-        "CAMERA",
-        "ACCESS_FINE_LOCATION"
-      ]
+      "permissions": ["CAMERA", "ACCESS_FINE_LOCATION"]
     },
 
     "plugins": [
