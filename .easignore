@@ -1,0 +1,20 @@
+# Dependencias y cachés
+node_modules
+.expo
+dist
+web-build
+coverage
+
+# Carpetas nativas generadas por prebuild si no se usan directamente
+/android
+/ios
+
+# Variables y secretos
+.env
+.env.*
+*.pem
+*.key
+*.p8
+
+# Herramientas internas sensibles
+/scripts/seed-app-users.js
