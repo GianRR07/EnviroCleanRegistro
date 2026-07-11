@@ -1,0 +1,64 @@
+{
+  "expo": {
+    "name": "EnviroClean Registro",
+    "slug": "EnviroCleanRegistro",
+    "version": "1.0.1",
+    "orientation": "portrait",
+    "icon": "./assets/branding/icon.png",
+    "scheme": "envirocleanregistro",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "icon": "./assets/branding/icon.png",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Se necesita la cámara para tomar fotos de los registros.",
+        "NSLocationWhenInUseUsageDescription": "Se necesita la ubicación para registrar el GPS de las fotos."
+      }
+    },
+    "android": {
+      "package": "com.ander1106.envirocleanregistro",
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/branding/adaptive-icon.png",
+        "monochromeImage": "./assets/branding/monochrome-icon.png"
+      },
+      "permissions": [
+        "CAMERA",
+        "ACCESS_FINE_LOCATION"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#208AEF",
+          "image": "./assets/branding/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Se necesita la cámara para tomar fotos de los registros.",
+          "recordAudioAndroid": false
+        }
+      ],
+      "expo-location"
+    ],
+    "web": {
+      "output": "static",
+      "favicon": "./assets/branding/icon.png"
+    },
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "ef92b1cd-771c-443b-9c91-291ddb0fd59f"
+      }
+    }
+  }
+}
