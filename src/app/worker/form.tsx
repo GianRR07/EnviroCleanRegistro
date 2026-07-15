@@ -1,12 +1,6 @@
-import { translateAppwriteError } from "@/utils/errorMessages";
-import type { AppUser } from "@/utils/authUsers";
 import { useAndroidBackHandler } from "@/hooks/use-android-back-handler";
-import {
-  getLocalRecords,
-  queueRecordForSync,
-  syncPendingRecords,
-  syncRecordNow,
-} from "@/utils/offlineRecords";
+import { translateAppwriteError } from "@/utils/errorMessages";
+import { queueRecordForSync, syncPendingRecords } from "@/utils/offlineRecords";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { CameraView, useCameraPermissions } from "expo-camera";
@@ -16,6 +10,7 @@ import { useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
+  AppState,
   Image,
   Linking,
   Modal,
@@ -27,7 +22,10 @@ import {
 } from "react-native";
 // Importar estilos centralizados
 import { workerFormStyles as styles } from "@/styles";
-import { clearCurrentUserSession, getCurrentUserSession } from "@/utils/session";
+import {
+  clearCurrentUserSession,
+  getCurrentUserSession,
+} from "@/utils/session";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 type GPSData = {
@@ -35,11 +33,20 @@ type GPSData = {
   longitude: number;
 };
 
+type EstadoSincronizacionFoto =
+  | "pendiente"
+  | "subiendo"
+  | "sincronizada"
+  | "error";
+
 type PhotoData = {
   uri: string;
   appwriteId?: string;
   gps: GPSData | null;
   createdAt: string;
+  estadoSincronizacion?: EstadoSincronizacionFoto;
+  intentosSincronizacion?: number;
+  ultimoErrorSincronizacion?: string | null;
 };
 
 type PhotoType = "estadoEncontrado" | "estadoFinal" | "formatoFisico";
@@ -115,6 +122,7 @@ export default function Worker() {
   const router = useRouter();
   const cameraRef = useRef<any>(null);
   const draftLoadedRef = useRef(false);
+  const syncInProgressRef = useRef(false);
 
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
 
@@ -128,31 +136,10 @@ export default function Worker() {
     useState(false);
 
   const [form, setForm] = useState<FormData>(DEFAULT_FORM);
-  const [currentRecordId, setCurrentRecordId] = useState<number | null>(null);
-  const [currentAppwriteRecordId, setCurrentAppwriteRecordId] = useState<string | null>(null);
-  const [currentRecordStatus, setCurrentRecordStatus] = useState<
-    "pendiente" | "completado" | null
-  >(null);
-  const [currentRecordCreatedAt, setCurrentRecordCreatedAt] = useState<string | null>(null);
-  const [currentWorker, setCurrentWorker] = useState<AppUser | null>(null);
-  const [currentSyncPending, setCurrentSyncPending] = useState(false);
-  const [syncingPending, setSyncingPending] = useState(false);
 
   const [stations, setStations] = useState<StationData[]>(() => [
     createStation(1, ""),
   ]);
-
-  const loadCurrentWorker = useCallback(async () => {
-    try {
-      const sessionUser = await getCurrentUserSession();
-      setCurrentWorker(
-        sessionUser?.role === "trabajador" ? sessionUser : null,
-      );
-    } catch (error) {
-      console.log("Error cargando trabajador actual:", error);
-      setCurrentWorker(null);
-    }
-  }, []);
 
   useEffect(() => {
     if (!draftLoadedRef.current) return;
@@ -162,12 +149,6 @@ export default function Worker() {
         const draft = {
           form,
           stations,
-          currentRecordId,
-          currentAppwriteRecordId,
-          currentRecordStatus,
-          currentRecordCreatedAt,
-          currentWorker,
-          currentSyncPending,
           updatedAt: getPeruDate(),
         };
 
@@ -178,16 +159,7 @@ export default function Worker() {
     }, 500);
 
     return () => clearTimeout(timer);
-  }, [
-    form,
-    stations,
-    currentRecordId,
-    currentAppwriteRecordId,
-    currentRecordStatus,
-    currentRecordCreatedAt,
-    currentWorker,
-    currentSyncPending,
-  ]);
+  }, [form, stations]);
 
   const loadDraft = useCallback(async () => {
     try {
@@ -207,13 +179,7 @@ export default function Worker() {
           setStations(parsed.stations);
         }
 
-        setCurrentRecordId(parsed?.currentRecordId ?? null);
-        setCurrentAppwriteRecordId(parsed?.currentAppwriteRecordId ?? null);
-        setCurrentRecordStatus(parsed?.currentRecordStatus ?? null);
-        setCurrentRecordCreatedAt(parsed?.currentRecordCreatedAt ?? null);
-        setCurrentSyncPending(Boolean(parsed?.currentSyncPending));
-        // La identidad nunca se restaura desde el borrador. Un borrador puede
-        // sobrevivir al cierre de sesión y pertenecer a otro trabajador.
+        // La identidad del trabajador nunca se restaura desde el borrador.
       }
     } catch (error) {
       console.log("Error cargando borrador:", error);
@@ -244,11 +210,10 @@ export default function Worker() {
     const initialLoad = setTimeout(() => {
       void loadDraft();
       void preparePermissions();
-      void loadCurrentWorker();
     }, 0);
 
     return () => clearTimeout(initialLoad);
-  }, [loadCurrentWorker, loadDraft, preparePermissions]);
+  }, [loadDraft, preparePermissions]);
 
   const ensurePhotoDirectory = async () => {
     const directoryInfo = await FileSystem.getInfoAsync(PHOTO_DIRECTORY);
@@ -478,6 +443,9 @@ export default function Worker() {
         uri: permanentUri,
         gps,
         createdAt: getPeruDate(),
+        estadoSincronizacion: "pendiente",
+        intentosSincronizacion: 0,
+        ultimoErrorSincronizacion: null,
       };
 
       setStations((prev) =>
@@ -534,58 +502,32 @@ export default function Worker() {
     }
   };
 
-  const clearDraft = async () => {
-    if (currentSyncPending) {
-      Alert.alert(
-        "Sincronización pendiente",
-        "No se puede borrar este formulario porque todavía no fue enviado a Appwrite. Conéctate a internet y presiona 'Sincronizar ahora'.",
-      );
-      return;
-    }
+  const resetFormForNewRecord = useCallback(async () => {
+    /*
+     * Solo se limpia el borrador visual.
+     * No se eliminan físicamente las fotografías porque pueden pertenecer
+     * a un registro que continúa pendiente dentro de la cola local.
+     */
+    await AsyncStorage.removeItem(DRAFT_STORAGE_KEY);
+    setForm(DEFAULT_FORM);
+    setStations([createStation(1, "")]);
+  }, []);
 
+  const clearDraft = async () => {
     Alert.alert(
       "Limpiar formulario",
-      "¿Deseas borrar todos los datos y fotos guardadas en este borrador?",
+      "¿Deseas borrar los datos del formulario actual? Los registros ya guardados localmente no serán eliminados.",
       [
         {
           text: "Cancelar",
           style: "cancel",
         },
         {
-          text: "Sí, borrar",
+          text: "Sí, limpiar",
           style: "destructive",
           onPress: async () => {
             try {
-              for (const station of stations) {
-                const photos = [
-                  station.estadoEncontrado,
-                  station.estadoFinal,
-                  station.formatoFisico,
-                ];
-
-                for (const photo of photos) {
-                  if (photo?.uri) {
-                    const info = await FileSystem.getInfoAsync(photo.uri);
-
-                    if (info.exists) {
-                      await FileSystem.deleteAsync(photo.uri, {
-                        idempotent: true,
-                      });
-                    }
-                  }
-                }
-              }
-
-              await AsyncStorage.removeItem(DRAFT_STORAGE_KEY);
-
-              setForm(DEFAULT_FORM);
-              setStations([createStation(1, "")]);
-              setCurrentRecordId(null);
-              setCurrentAppwriteRecordId(null);
-              setCurrentRecordStatus(null);
-              setCurrentRecordCreatedAt(null);
-              setCurrentSyncPending(false);
-
+              await resetFormForNewRecord();
               Alert.alert("Listo", "Formulario limpiado correctamente.");
             } catch (error) {
               console.log("Error limpiando borrador:", error);
@@ -597,80 +539,49 @@ export default function Worker() {
     );
   };
 
-  const getCurrentSaveButtonText = () => {
-    if (savingRecord) return "Guardando...";
-    if (currentSyncPending) return "Guardar cambios en el dispositivo";
-    if (currentRecordStatus === "completado") return "Registro completado";
-    if (currentAppwriteRecordId || currentRecordStatus === "pendiente") {
-      return "Actualizar registro pendiente";
-    }
-    return "Guardar registro";
-  };
+  const runBackgroundSync = useCallback(async () => {
+    if (syncInProgressRef.current) return;
 
-  const getClearButtonText = () => {
-    if (currentRecordStatus === "completado") {
-      return "Cerrar y limpiar para nuevo registro";
-    }
-    return "Limpiar formulario";
-  };
-
-  const refreshCurrentRecordFromLocal = useCallback(async () => {
-    if (!currentRecordId) return null;
-
-    const localRecords = await getLocalRecords();
-    const localRecord = localRecords.find(
-      (item: any) => String(item.id) === String(currentRecordId),
-    );
-
-    if (!localRecord) return null;
-
-    if (Array.isArray(localRecord.stations) && localRecord.stations.length > 0) {
-      setStations(localRecord.stations);
-    }
-
-    setCurrentAppwriteRecordId(localRecord.appwriteId ?? null);
-    setCurrentRecordStatus(localRecord.status ?? null);
-    setCurrentRecordCreatedAt(localRecord.createdAt ?? null);
-    setCurrentSyncPending(localRecord.syncStatus === "pending");
-
-    return localRecord;
-  }, [currentRecordId]);
-
-  const synchronizePending = useCallback(async (showFeedback = true) => {
-    if (syncingPending) return;
+    syncInProgressRef.current = true;
 
     try {
-      setSyncingPending(true);
-      const result = await syncPendingRecords();
-      const localRecord = await refreshCurrentRecordFromLocal();
-
-      if (!showFeedback) return;
-
-      if (localRecord?.syncStatus === "synced" || result.synced > 0) {
-        Alert.alert("Sincronización completa", "El registro ya está guardado en Appwrite.");
-      } else if (result.pending > 0) {
-        Alert.alert(
-          "Sin conexión",
-          "El registro y sus fotografías siguen guardados de forma segura en el dispositivo. Se enviarán automáticamente al recuperar internet.",
-        );
-      } else {
-        Alert.alert("Sin pendientes", "No hay registros pendientes de sincronización.");
-      }
+      await syncPendingRecords();
+    } catch (error) {
+      /*
+       * Un error de red nunca revierte el guardado local.
+       * La cola conservará los registros para el siguiente intento.
+       */
+      console.log(
+        "Sincronización pendiente; los registros continúan seguros en el dispositivo:",
+        error,
+      );
     } finally {
-      setSyncingPending(false);
+      syncInProgressRef.current = false;
     }
-  }, [refreshCurrentRecordFromLocal, syncingPending]);
+  }, []);
 
   useEffect(() => {
-    if (!currentSyncPending || savingRecord) return;
+    /*
+     * Se intenta sincronizar al abrir el formulario, cada 30 segundos y
+     * cuando la aplicación regresa al primer plano.
+     */
+    void runBackgroundSync();
 
-    void synchronizePending(false);
-    const interval = setInterval(() => {
-      void synchronizePending(false);
-    }, 20000);
+    const intervalId = setInterval(() => {
+      void runBackgroundSync();
+    }, 30_000);
 
-    return () => clearInterval(interval);
-  }, [currentSyncPending, savingRecord, synchronizePending]);
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") {
+        void runBackgroundSync();
+      }
+    });
+
+    return () => {
+      clearInterval(intervalId);
+      subscription.remove();
+    };
+  }, [runBackgroundSync]);
 
   useAndroidBackHandler(() => {
     if (previewPhoto) {
@@ -691,24 +602,24 @@ export default function Worker() {
   const saveRegister = async () => {
     if (savingRecord) return;
 
-    if (currentRecordStatus === "completado" && !currentSyncPending) {
-      Alert.alert(
-        "Registro completado",
-        "Este registro ya fue completado. Usa 'Cerrar y limpiar para nuevo registro' para empezar un servicio nuevo.",
-      );
-      return;
-    }
-
     setSavingRecord(true);
 
     try {
-      const boxes = stations.reduce<Record<number, StationData>>(
-        (accumulator, station, index) => {
-          accumulator[index + 1] = station;
-          return accumulator;
-        },
-        {},
-      );
+      const sessionWorker = await getCurrentUserSession();
+
+      if (!sessionWorker || sessionWorker.role !== "trabajador") {
+        throw new Error(
+          "No hay una sesión válida de trabajador. Cierra la pantalla e inicia sesión nuevamente.",
+        );
+      }
+
+      const workerId = sessionWorker.appwriteId || sessionWorker.id || "";
+
+      if (!workerId) {
+        throw new Error(
+          "La cuenta del trabajador no tiene un ID válido en Appwrite.",
+        );
+      }
 
       const isRecordComplete = (
         formData: typeof form,
@@ -725,37 +636,22 @@ export default function Worker() {
 
         if (!stationsData || stationsData.length === 0) return false;
 
-        return stationsData.every((station) => {
-          return (
+        return stationsData.every(
+          (station) =>
             !!station.numero &&
             !!station.ubicacion &&
             !!station.estadoEncontrado &&
             !!station.estadoFinal &&
-            !!station.formatoFisico
-          );
-        });
+            !!station.formatoFisico,
+        );
       };
 
-      const recordStatus = isRecordComplete(form, stations)
+      const estadoRegistro = isRecordComplete(form, stations)
         ? "completado"
         : "pendiente";
 
-      const localRecordId = currentRecordId ?? Date.now();
-      const recordCreatedAt = currentRecordCreatedAt ?? getPeruDate();
-      const sessionWorker = await getCurrentUserSession();
-
-      if (!sessionWorker || sessionWorker.role !== "trabajador") {
-        throw new Error(
-          "No hay una sesión válida de trabajador. Cierra la pantalla e inicia sesión nuevamente.",
-        );
-      }
-
-      const workerId = sessionWorker.appwriteId || sessionWorker.id || "";
-      if (!workerId) {
-        throw new Error(
-          "La cuenta del trabajador no tiene un ID válido en Appwrite.",
-        );
-      }
+      const localRecordId = Date.now();
+      const recordCreatedAt = getPeruDate();
 
       const workerInfo = {
         id: workerId,
@@ -767,93 +663,73 @@ export default function Worker() {
           "Trabajador no identificado",
       };
 
-      setCurrentWorker(sessionWorker);
+      /*
+       * No reconstruimos las fotografías en form.tsx.
+       * `stations` ya tiene el tipo StationData[] y cada foto nueva se crea
+       * con estado "pendiente". La normalización y los reintentos pertenecen
+       * exclusivamente a offlineRecords.ts.
+       */
+      const stationsForRecord: StationData[] = stations;
 
       const record = {
         id: localRecordId,
-        appwriteId: currentAppwriteRecordId ?? undefined,
+        clientRecordId: String(localRecordId),
         form: {
           ...form,
-          cantidadEstaciones: form.cantidadEstaciones || String(stations.length),
+          cantidadEstaciones:
+            form.cantidadEstaciones || String(stationsForRecord.length),
         },
-        boxes,
-        stations,
-        status: recordStatus,
+        boxes: stationsForRecord.reduce<Record<number, StationData>>(
+          (accumulator, station, index) => {
+            accumulator[index + 1] = station;
+            return accumulator;
+          },
+          {},
+        ),
+        stations: stationsForRecord,
+        status: estadoRegistro,
+        syncStatus: "pending",
+        estadoSincronizacion: "pendiente",
         createdAt: recordCreatedAt,
+        updatedAt: recordCreatedAt,
         worker: workerInfo,
         trabajadorId: workerInfo.id,
         trabajadorUsuario: workerInfo.username,
         trabajadorNombre: workerInfo.name,
       };
 
-      // Primero se escribe localmente. Por lo tanto, aunque falle la red, el
-      // formulario y las rutas de las fotos permanecen disponibles.
-      const queuedRecord = await queueRecordForSync(record);
+      /*
+       * ÚNICA OPERACIÓN QUE BLOQUEA EL BOTÓN:
+       * guardar el registro completo y las rutas de sus fotos en la cola local.
+       */
+      await queueRecordForSync(record);
 
-      setCurrentRecordId(localRecordId);
-      setCurrentRecordStatus(recordStatus);
-      setCurrentRecordCreatedAt(recordCreatedAt);
-      setCurrentSyncPending(true);
+      /*
+       * El trabajador puede iniciar inmediatamente otro registro.
+       * No se borran las fotos físicas; ahora pertenecen al registro en cola.
+       */
+      await resetFormForNewRecord();
 
-      await AsyncStorage.setItem(
-        DRAFT_STORAGE_KEY,
-        JSON.stringify({
-          form,
-          stations,
-          currentRecordId: localRecordId,
-          currentAppwriteRecordId: currentAppwriteRecordId ?? null,
-          currentRecordStatus: recordStatus,
-          currentRecordCreatedAt: recordCreatedAt,
-          currentSyncPending: true,
-          currentWorker: sessionWorker,
-          worker: workerInfo,
-          updatedAt: getPeruDate(),
-        }),
+      Alert.alert(
+        estadoRegistro === "completado"
+          ? "Registro guardado"
+          : "Registro guardado como pendiente",
+        "La información y las fotografías quedaron guardadas en el dispositivo. Puedes realizar otro registro mientras la sincronización continúa en segundo plano.",
       );
 
-      try {
-        const syncedRecord = await syncRecordNow(queuedRecord);
-
-        setStations(syncedRecord.stations || stations);
-        setCurrentAppwriteRecordId(syncedRecord.appwriteId ?? null);
-        setCurrentSyncPending(false);
-
-        await AsyncStorage.setItem(
-          DRAFT_STORAGE_KEY,
-          JSON.stringify({
-            form,
-            stations: syncedRecord.stations || stations,
-            currentRecordId: localRecordId,
-            currentAppwriteRecordId: syncedRecord.appwriteId ?? null,
-            currentRecordStatus: recordStatus,
-            currentRecordCreatedAt: recordCreatedAt,
-            currentSyncPending: false,
-            currentWorker: sessionWorker,
-            worker: workerInfo,
-            updatedAt: getPeruDate(),
-          }),
-        );
-
-        Alert.alert(
-          recordStatus === "completado"
-            ? "Registro completado"
-            : "Registro pendiente",
-          recordStatus === "completado"
-            ? "El registro y sus fotografías se guardaron correctamente en Appwrite."
-            : "El registro se guardó en Appwrite como pendiente. Puedes completarlo sin crear duplicados.",
-        );
-      } catch (syncError: any) {
-        console.log("ℹ️ Registro guardado localmente y pendiente:", syncError?.message);
-        Alert.alert(
-          "Guardado sin conexión",
-          "El registro y las fotografías quedaron guardados en este dispositivo. La app intentará enviarlos automáticamente cuando vuelva internet.",
-        );
-      }
+      /*
+       * No utilizar await aquí. La red nunca debe bloquear el formulario.
+       */
+      void runBackgroundSync();
     } catch (error: any) {
-      console.log("❌ ERROR GENERAL", error);
+      console.log("ERROR AL GUARDAR LOCALMENTE", error);
+
       Alert.alert(
         "Error",
-        translateAppwriteError(error, "No se pudo guardar el registro localmente."),
+        translateAppwriteError(
+          error,
+          "No se pudo guardar el registro en el dispositivo.",
+        ),
       );
     } finally {
       setSavingRecord(false);
@@ -870,7 +746,10 @@ export default function Worker() {
         </View>
 
         <TouchableOpacity
-          onPress={async () => { await clearCurrentUserSession(); router.replace("/login"); }}
+          onPress={async () => {
+            await clearCurrentUserSession();
+            router.replace("/login");
+          }}
           style={styles.logoutBtn}
         >
           <Ionicons name="log-out-outline" size={20} color="#c62828" />
@@ -1106,95 +985,61 @@ export default function Worker() {
           )}
         </View>
 
-        {/* BOTONES */}
-        {currentRecordStatus && (
-          <View
+        {/* ESTADO DEL GUARDADO Y BOTONES */}
+        <View
+          style={{
+            backgroundColor: "#E8F5E9",
+            borderRadius: 14,
+            padding: 14,
+            marginBottom: 14,
+            borderWidth: 1,
+            borderColor: "#A5D6A7",
+          }}
+        >
+          <Text
             style={{
-              backgroundColor: currentSyncPending
-                ? "#FFF3E0"
-                : currentRecordStatus === "completado"
-                  ? "#E8F5E9"
-                  : "#FFF8E1",
-              borderRadius: 14,
-              padding: 14,
-              marginBottom: 14,
-              borderWidth: 1,
-              borderColor: currentSyncPending
-                ? "#FFCC80"
-                : currentRecordStatus === "completado"
-                  ? "#A5D6A7"
-                  : "#FFE082",
+              color: "#2E7D32",
+              fontWeight: "800",
             }}
           >
-            <Text
-              style={{
-                color: currentSyncPending
-                  ? "#E65100"
-                  : currentRecordStatus === "completado"
-                    ? "#2E7D32"
-                    : "#F57F17",
-                fontWeight: "800",
-              }}
-            >
-              {currentSyncPending
-                ? "GUARDADO EN EL DISPOSITIVO · SINCRONIZACIÓN PENDIENTE"
-                : `Estado actual: ${currentRecordStatus.toUpperCase()}`}
-            </Text>
-            <Text style={{ color: "#555", marginTop: 6 }}>
-              {currentSyncPending
-                ? "Puedes cerrar la app sin perder las fotos. El envío se reintentará automáticamente cuando vuelva internet."
-                : currentRecordStatus === "completado"
-                  ? "Este registro ya está completo. Para iniciar otro servicio, limpia el formulario."
-                  : "Este registro existe como pendiente. Al guardar de nuevo se actualizará sin crear duplicados."}
-            </Text>
-          </View>
-        )}
+            GUARDADO LOCAL SEGURO
+          </Text>
 
-        {currentSyncPending && (
-          <TouchableOpacity
-            style={[styles.saveBtn, { backgroundColor: "#EF6C00", marginBottom: 12 }]}
-            onPress={() => void synchronizePending(true)}
-            disabled={syncingPending}
-          >
-            <Ionicons
-              name="cloud-upload-outline"
-              size={20}
-              color="#fff"
-              style={{ marginRight: 8 }}
-            />
-            <Text style={styles.saveBtnText}>
-              {syncingPending ? "Sincronizando..." : "Sincronizar ahora"}
-            </Text>
-          </TouchableOpacity>
-        )}
+          <Text style={{ color: "#555", marginTop: 6 }}>
+            Al guardar, el formulario se libera inmediatamente. La aplicación
+            enviará los registros y fotografías pendientes sin impedir que
+            continúes trabajando.
+          </Text>
+        </View>
 
         <TouchableOpacity
-          style={[
-            styles.saveBtn,
-            (savingRecord || (currentRecordStatus === "completado" && !currentSyncPending)) && {
-              opacity: 0.55,
-            },
-          ]}
+          style={[styles.saveBtn, savingRecord && { opacity: 0.55 }]}
           onPress={saveRegister}
-          disabled={savingRecord || (currentRecordStatus === "completado" && !currentSyncPending)}
+          disabled={savingRecord}
         >
           <Ionicons
-            name={currentAppwriteRecordId ? "sync-outline" : "save-outline"}
+            name="save-outline"
             size={20}
             color="#fff"
             style={{ marginRight: 8 }}
           />
-          <Text style={styles.saveBtnText}>{getCurrentSaveButtonText()}</Text>
+
+          <Text style={styles.saveBtnText}>
+            {savingRecord
+              ? "Guardando en el dispositivo..."
+              : "Guardar registro en el dispositivo"}
+          </Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.clearBtn} onPress={clearDraft}>
           <Ionicons
-            name={currentRecordStatus === "completado" ? "checkmark-done-outline" : "trash-outline"}
+            name="trash-outline"
             size={20}
             color="#c62828"
             style={{ marginRight: 8 }}
           />
-          <Text style={styles.clearBtnText}>{getClearButtonText()}</Text>
+
+          <Text style={styles.clearBtnText}>Limpiar formulario actual</Text>
         </TouchableOpacity>
       </ScrollView>
 
@@ -1407,7 +1252,3 @@ const PhotoItem = ({
     </View>
   );
 };
-
-/* ==================== ESTILOS ==================== */
-
-// Estilos locales originales de la pantalla del trabajador (no utilizados).

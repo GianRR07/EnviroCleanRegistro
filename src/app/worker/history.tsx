@@ -2,6 +2,7 @@ import { useAndroidBackHandler } from "@/hooks/use-android-back-handler";
 import { workerHistoryStyles as styles } from "@/styles";
 import { getRecordsAppwrite } from "@/utils/appwriteRecords";
 import {
+  getLocalRecords,
   getPendingRecordCount,
   mergeRemoteAndLocalRecords,
   syncPendingRecords,
@@ -15,6 +16,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  AppState,
   Image,
   Linking,
   ScrollView,
@@ -38,8 +40,14 @@ const PHOTO_LABELS: Record<string, string> = {
 
 type SyncOptions = {
   showSyncIndicator?: boolean;
-  showLoadingIndicator?: boolean;
 };
+
+type EstadoVisualSincronizacion =
+  | "pendiente"
+  | "sincronizando"
+  | "parcial"
+  | "sincronizado"
+  | "error";
 
 const parseJson = (value: any, fallback: any) => {
   if (!value) return fallback;
@@ -57,6 +65,154 @@ const formatCoordinate = (value: unknown) => {
 
   return Number.isFinite(coordinate) ? coordinate.toFixed(6) : "No disponible";
 };
+
+const getVisualSyncStatus = (record: any): EstadoVisualSincronizacion => {
+  const raw = String(
+    record?.estadoSincronizacion || record?.syncStatus || "",
+  ).toLowerCase();
+
+  if (raw === "synced" || raw === "sincronizado" || raw === "sincronizada") {
+    return "sincronizado";
+  }
+
+  if (
+    raw === "syncing" ||
+    raw === "uploading" ||
+    raw === "sincronizando" ||
+    raw === "subiendo"
+  ) {
+    return "sincronizando";
+  }
+
+  if (
+    raw === "partial" ||
+    raw === "parcial" ||
+    raw === "sincronizacion_parcial"
+  ) {
+    return "parcial";
+  }
+
+  if (
+    raw === "error" ||
+    raw === "failed" ||
+    raw === "fallido" ||
+    raw === "fallida"
+  ) {
+    return "error";
+  }
+
+  /*
+   * Los registros remotos que no contienen syncStatus ya están confirmados
+   * en Appwrite. Los registros locales sin appwriteId siguen pendientes.
+   */
+  if (record?.appwriteId || record?.$id) {
+    return "sincronizado";
+  }
+
+  return "pendiente";
+};
+
+const SYNC_STATUS_UI: Record<
+  EstadoVisualSincronizacion,
+  { label: string; background: string; border: string; text: string }
+> = {
+  pendiente: {
+    label: "PENDIENTE DE SINCRONIZACIÓN",
+    background: "#FFF3E0",
+    border: "#FFCC80",
+    text: "#E65100",
+  },
+  sincronizando: {
+    label: "SINCRONIZANDO",
+    background: "#E3F2FD",
+    border: "#90CAF9",
+    text: "#1565C0",
+  },
+  parcial: {
+    label: "SINCRONIZACIÓN PARCIAL",
+    background: "#FFF8E1",
+    border: "#FFE082",
+    text: "#F57F17",
+  },
+  sincronizado: {
+    label: "SINCRONIZADO",
+    background: "#E8F5E9",
+    border: "#A5D6A7",
+    text: "#2E7D32",
+  },
+  error: {
+    label: "ERROR DE SINCRONIZACIÓN",
+    background: "#FFEBEE",
+    border: "#EF9A9A",
+    text: "#C62828",
+  },
+};
+
+const getPhotoSyncStatus = (photo: any): EstadoVisualSincronizacion => {
+  if (!photo) return "pendiente";
+
+  const raw = String(
+    photo?.estadoSincronizacion || photo?.uploadStatus || "",
+  ).toLowerCase();
+
+  if (
+    photo?.appwriteId ||
+    photo?.fileId ||
+    photo?.$id ||
+    raw === "synced" ||
+    raw === "sincronizada" ||
+    raw === "sincronizado"
+  ) {
+    return "sincronizado";
+  }
+
+  if (
+    raw === "syncing" ||
+    raw === "uploading" ||
+    raw === "subiendo" ||
+    raw === "sincronizando"
+  ) {
+    return "sincronizando";
+  }
+
+  if (raw === "error" || raw === "failed" || raw === "fallida") {
+    return "error";
+  }
+
+  return "pendiente";
+};
+
+const getPhotoProgress = (stations: any[]) => {
+  const photos = stations.flatMap((station) => [
+    station?.estadoEncontrado,
+    station?.estadoFinal,
+    station?.formatoFisico,
+  ]);
+
+  const existingPhotos = photos.filter(Boolean);
+  const synchronizedPhotos = existingPhotos.filter(
+    (photo) => getPhotoSyncStatus(photo) === "sincronizado",
+  ).length;
+
+  return {
+    total: existingPhotos.length,
+    synchronized: synchronizedPhotos,
+  };
+};
+
+const sortNewestFirst = (items: any[]) =>
+  [...items].sort((a, b) => {
+    const first = new Date(a?.$createdAt || a?.createdAt || 0).getTime();
+    const second = new Date(b?.$createdAt || b?.createdAt || 0).getTime();
+
+    if (Number.isNaN(first) || Number.isNaN(second)) {
+      return String(b?.createdAt || "").localeCompare(
+        String(a?.createdAt || ""),
+      );
+    }
+
+    return second - first;
+  });
 
 export default function WorkerHistory() {
   const router = useRouter();
@@ -123,25 +279,12 @@ export default function WorkerHistory() {
       .map(([, station]) => station);
   };
 
-  const loadRecords = useCallback(async (showLoadingIndicator = true) => {
-    if (showLoadingIndicator) {
-      setLoading(true);
-    }
+  const filterOwnRecords = useCallback(async (items: any[]) => {
+    const session = await getCurrentUserSession();
+    const workerId = session?.appwriteId || session?.id || "";
 
-    try {
-      let remote: any[] = [];
-
-      try {
-        remote = await getRecordsAppwrite();
-      } catch (error) {
-        console.log("Historial trabajando con datos locales:", error);
-      }
-
-      const merged = await mergeRemoteAndLocalRecords(remote);
-      const session = await getCurrentUserSession();
-      const workerId = session?.appwriteId || session?.id || "";
-
-      const ownRecords = merged.filter((record: any) => {
+    return sortNewestFirst(
+      items.filter((record: any) => {
         const recordWorkerId =
           record?.trabajadorId ||
           record?.worker?.id ||
@@ -149,31 +292,62 @@ export default function WorkerHistory() {
           "";
 
         return !workerId || String(recordWorkerId) === String(workerId);
-      });
+      }),
+    );
+  }, []);
+
+  const loadLocalHistory = useCallback(
+    async (showLoadingIndicator = true) => {
+      if (showLoadingIndicator) {
+        setLoading(true);
+      }
+
+      try {
+        const local = await getLocalRecords();
+        const ownRecords = await filterOwnRecords(local || []);
+
+        /*
+         * El historial local se muestra inmediatamente, sin esperar Appwrite.
+         */
+        setRecords(ownRecords);
+        setPendingCount(await getPendingRecordCount());
+      } catch (error) {
+        console.error("No se pudo cargar el historial local:", error);
+      } finally {
+        if (showLoadingIndicator) {
+          setLoading(false);
+        }
+      }
+    },
+    [filterOwnRecords],
+  );
+
+  const loadMergedHistory = useCallback(async () => {
+    try {
+      let remote: any[] = [];
+
+      try {
+        remote = await getRecordsAppwrite();
+      } catch (error) {
+        console.log(
+          "No fue posible consultar Appwrite; se conservará el historial local:",
+          error,
+        );
+      }
+
+      const merged = await mergeRemoteAndLocalRecords(remote);
+      const ownRecords = await filterOwnRecords(merged || []);
 
       setRecords(ownRecords);
       setPendingCount(await getPendingRecordCount());
     } catch (error) {
-      console.error("No se pudo cargar el historial del trabajador:", error);
-    } finally {
-      if (showLoadingIndicator) {
-        setLoading(false);
-      }
+      console.error("No se pudo actualizar el historial combinado:", error);
     }
-  }, []);
+  }, [filterOwnRecords]);
 
   const synchronize = useCallback(
-    async ({
-      showSyncIndicator = false,
-      showLoadingIndicator = false,
-    }: SyncOptions = {}) => {
-      /*
-       * Evita que el intervalo, el ingreso a la pantalla y el botón
-       * manual ejecuten sincronizaciones al mismo tiempo.
-       */
-      if (syncInProgressRef.current) {
-        return;
-      }
+    async ({ showSyncIndicator = false }: SyncOptions = {}) => {
+      if (syncInProgressRef.current) return;
 
       syncInProgressRef.current = true;
 
@@ -181,21 +355,40 @@ export default function WorkerHistory() {
         setSyncing(true);
       }
 
+      /*
+       * Refleja el cambio visual sin ocultar los registros ya cargados.
+       */
+      setRecords((current) =>
+        current.map((record) => {
+          const state = getVisualSyncStatus(record);
+
+          if (state !== "pendiente" && state !== "parcial") {
+            return record;
+          }
+
+          return {
+            ...record,
+            estadoSincronizacion: "sincronizando",
+          };
+        }),
+      );
+
       try {
         try {
           await syncPendingRecords();
         } catch (error) {
           console.log(
-            "No se pudieron sincronizar los registros pendientes. Se conservarán localmente:",
+            "La sincronización no terminó. Los archivos continúan guardados localmente:",
             error,
           );
         }
 
         /*
-         * synchronize ya carga los registros.
-         * No se debe llamar loadRecords por separado al entrar.
+         * Después del intento se relee la cola local y luego Appwrite.
+         * Ninguna de estas operaciones bloquea la visualización inicial.
          */
-        await loadRecords(showLoadingIndicator);
+        await loadLocalHistory(false);
+        await loadMergedHistory();
       } finally {
         syncInProgressRef.current = false;
 
@@ -204,34 +397,40 @@ export default function WorkerHistory() {
         }
       }
     },
-    [loadRecords],
+    [loadLocalHistory, loadMergedHistory],
   );
 
   useFocusEffect(
     useCallback(() => {
-      /*
-       * Al entrar se realiza una sola operación:
-       * sincronizar pendientes y luego cargar el historial.
-       */
-      void synchronize({
-        showLoadingIndicator: true,
-      });
+      let active = true;
 
-      /*
-       * Actualización automática silenciosa cada 30 segundos.
-       * No muestra "Cargando" ni el spinner de sincronización.
-       */
+      const openHistory = async () => {
+        await loadLocalHistory(true);
+
+        if (active) {
+          void synchronize();
+        }
+      };
+
+      void openHistory();
+
       const intervalId = setInterval(() => {
-        void synchronize({
-          showSyncIndicator: false,
-          showLoadingIndicator: false,
-        });
+        void synchronize();
       }, AUTO_SYNC_INTERVAL_MS);
 
+      const subscription = AppState.addEventListener("change", (nextState) => {
+        if (nextState === "active") {
+          void loadLocalHistory(false);
+          void synchronize();
+        }
+      });
+
       return () => {
+        active = false;
         clearInterval(intervalId);
+        subscription.remove();
       };
-    }, [synchronize]),
+    }, [loadLocalHistory, synchronize]),
   );
 
   useAndroidBackHandler(() => {
@@ -284,7 +483,6 @@ export default function WorkerHistory() {
         onPress={() =>
           void synchronize({
             showSyncIndicator: true,
-            showLoadingIndicator: false,
           })
         }
         disabled={syncing}
@@ -325,9 +523,9 @@ export default function WorkerHistory() {
           }}
         >
           {syncing
-            ? "Sincronizando..."
+            ? "Sincronizando registros y fotografías..."
             : pendingCount > 0
-              ? `${pendingCount} registro(s) pendiente(s) · Sincronizar`
+              ? `${pendingCount} registro(s) pendiente(s) · Sincronizar ahora`
               : "Todos los registros están sincronizados"}
         </Text>
       </TouchableOpacity>
@@ -347,6 +545,9 @@ export default function WorkerHistory() {
 
             const expanded = expandedId === recordId;
             const stations = getStations(record);
+            const syncState = getVisualSyncStatus(record);
+            const syncUi = SYNC_STATUS_UI[syncState];
+            const photoProgress = getPhotoProgress(stations);
 
             const quantity =
               record?.form?.cantidadEstaciones || String(stations.length || 0);
@@ -362,11 +563,25 @@ export default function WorkerHistory() {
                       {record.form?.cliente || "Sin cliente"}
                     </Text>
 
-                    <View style={styles.badge}>
-                      <Text style={styles.badgeText}>
-                        {record.syncStatus === "pending"
-                          ? "SIN INTERNET"
-                          : record.status || "pendiente"}
+                    <View
+                      style={[
+                        styles.badge,
+                        {
+                          backgroundColor: syncUi.background,
+                          borderColor: syncUi.border,
+                          borderWidth: 1,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.badgeText,
+                          {
+                            color: syncUi.text,
+                          },
+                        ]}
+                      >
+                        {syncUi.label}
                       </Text>
                     </View>
                   </View>
@@ -383,6 +598,18 @@ export default function WorkerHistory() {
                     Fecha del registro:{" "}
                     {record.createdAt || record.$createdAt || "Sin fecha"}
                   </Text>
+
+                  <Text style={styles.date}>
+                    Estado del registro:{" "}
+                    {String(record.status || "pendiente").toUpperCase()}
+                  </Text>
+
+                  {photoProgress.total > 0 && (
+                    <Text style={styles.date}>
+                      Fotografías sincronizadas: {photoProgress.synchronized} de{" "}
+                      {photoProgress.total}
+                    </Text>
+                  )}
 
                   <View
                     style={{
@@ -468,6 +695,45 @@ export default function WorkerHistory() {
                                 <Text style={styles.photoLabel}>
                                   {PHOTO_LABELS[type]}
                                 </Text>
+
+                                {photo && (
+                                  <View
+                                    style={{
+                                      alignSelf: "flex-start",
+                                      marginBottom: 8,
+                                      borderRadius: 999,
+                                      paddingHorizontal: 9,
+                                      paddingVertical: 5,
+                                      backgroundColor:
+                                        SYNC_STATUS_UI[
+                                          getPhotoSyncStatus(photo)
+                                        ].background,
+                                      borderWidth: 1,
+                                      borderColor:
+                                        SYNC_STATUS_UI[
+                                          getPhotoSyncStatus(photo)
+                                        ].border,
+                                    }}
+                                  >
+                                    <Text
+                                      style={{
+                                        fontSize: 11,
+                                        fontWeight: "800",
+                                        color:
+                                          SYNC_STATUS_UI[
+                                            getPhotoSyncStatus(photo)
+                                          ].text,
+                                      }}
+                                    >
+                                      FOTO{" "}
+                                      {
+                                        SYNC_STATUS_UI[
+                                          getPhotoSyncStatus(photo)
+                                        ].label
+                                      }
+                                    </Text>
+                                  </View>
+                                )}
 
                                 {url ? (
                                   <Image
