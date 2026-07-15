@@ -603,59 +603,140 @@ export default function Admin() {
      FOTOGRAFÍAS
   ======================================================= */
 
-  const getPhotoUrl = (photoData: any) => {
+  const buildAppwritePhotoUrl = (fileId: unknown) => {
+    const normalizedFileId = String(fileId ?? "").trim();
+
+    if (!normalizedFileId) {
+      return null;
+    }
+
+    return `${APPWRITE_ENDPOINT}/storage/buckets/${encodeURIComponent(
+      APPWRITE_BUCKET_ID,
+    )}/files/${encodeURIComponent(
+      normalizedFileId,
+    )}/view?project=${encodeURIComponent(APPWRITE_PROJECT_ID)}`;
+  };
+
+  const normalizePhotoData = (photoData: any) => {
+    if (typeof photoData !== "string") {
+      return photoData;
+    }
+
+    const value = photoData.trim();
+
+    if (!value) {
+      return null;
+    }
+
+    if (
+      (value.startsWith("{") && value.endsWith("}")) ||
+      (value.startsWith("[") && value.endsWith("]"))
+    ) {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return value;
+      }
+    }
+
+    return value;
+  };
+
+  const getPhotoUrl = (rawPhotoData: any) => {
+    const photoData = normalizePhotoData(rawPhotoData);
+
     if (!photoData) {
       return null;
     }
 
     if (typeof photoData === "string") {
+      if (photoData.startsWith("http://") || photoData.startsWith("https://")) {
+        return photoData;
+      }
+
       if (
-        photoData.startsWith("http") ||
         photoData.startsWith("file://") ||
         photoData.startsWith("content://")
       ) {
         return photoData;
       }
 
-      return `${APPWRITE_ENDPOINT}/storage/buckets/${APPWRITE_BUCKET_ID}/files/${photoData}/view?project=${APPWRITE_PROJECT_ID}`;
+      return buildAppwritePhotoUrl(photoData);
     }
 
-    if (
-      photoData?.uri?.startsWith("http") ||
-      photoData?.uri?.startsWith("file://") ||
-      photoData?.uri?.startsWith("content://")
-    ) {
-      return photoData.uri;
-    }
-
+    /*
+     * Se prioriza siempre el archivo remoto de Appwrite.
+     * La URI local solo existe en el teléfono que tomó la foto.
+     */
     const fileId =
-      photoData.appwriteId || photoData.fileId || photoData.$id || photoData.id;
+      photoData?.appwriteId ||
+      photoData?.fileId ||
+      photoData?.storageFileId ||
+      photoData?.$id;
 
     if (fileId) {
-      return `${APPWRITE_ENDPOINT}/storage/buckets/${APPWRITE_BUCKET_ID}/files/${fileId}/view?project=${APPWRITE_PROJECT_ID}`;
+      return buildAppwritePhotoUrl(fileId);
+    }
+
+    const explicitRemoteUrl =
+      photoData?.url || photoData?.viewUrl || photoData?.previewUrl;
+
+    if (
+      typeof explicitRemoteUrl === "string" &&
+      (explicitRemoteUrl.startsWith("http://") ||
+        explicitRemoteUrl.startsWith("https://"))
+    ) {
+      return explicitRemoteUrl;
+    }
+
+    const uri = typeof photoData?.uri === "string" ? photoData.uri.trim() : "";
+
+    if (uri.startsWith("http://") || uri.startsWith("https://")) {
+      return uri;
+    }
+
+    if (uri.startsWith("file://") || uri.startsWith("content://")) {
+      return uri;
+    }
+
+    const legacyId = String(photoData?.id ?? "").trim();
+
+    if (legacyId && !/^\d+$/.test(legacyId)) {
+      return buildAppwritePhotoUrl(legacyId);
     }
 
     return null;
   };
 
-  const getIncidentImageUrl = (image: any) => {
+  const getIncidentImageUrl = (rawImage: any) => {
+    const image = normalizePhotoData(rawImage);
+
     if (!image) {
       return null;
     }
 
-    if (typeof image === "string") {
-      if (
-        image.startsWith("http") ||
-        image.startsWith("file://") ||
-        image.startsWith("content://")
-      ) {
-        return image;
+    if (typeof image === "object") {
+      const remoteId =
+        image?.appwriteId ||
+        image?.fileId ||
+        image?.storageFileId ||
+        image?.$id;
+
+      if (remoteId) {
+        return buildAppwritePhotoUrl(remoteId);
       }
 
-      return `${APPWRITE_ENDPOINT}/storage/buckets/${APPWRITE_BUCKET_ID}/files/${image}/view?project=${APPWRITE_PROJECT_ID}`;
+      const remoteUrl = image?.url || image?.viewUrl;
+
+      if (
+        typeof remoteUrl === "string" &&
+        (remoteUrl.startsWith("http://") || remoteUrl.startsWith("https://"))
+      ) {
+        return remoteUrl;
+      }
     }
 
-    return image.uri || image.url || getPhotoUrl(image);
+    return getPhotoUrl(image);
   };
 
   /* =========================================================
@@ -1257,6 +1338,15 @@ export default function Admin() {
                                           marginRight: 10,
                                           backgroundColor: "#eee",
                                         }}
+                                        onError={(event) => {
+                                          console.log(
+                                            "❌ No se pudo mostrar una imagen de incidencia:",
+                                            {
+                                              imageUrl,
+                                              error: event.nativeEvent.error,
+                                            },
+                                          );
+                                        }}
                                       />
                                     );
                                   },
@@ -1363,6 +1453,21 @@ export default function Admin() {
                                     uri: photoUrl,
                                   }}
                                   style={styles.photo}
+                                  onError={(event) => {
+                                    console.log(
+                                      "❌ No se pudo mostrar una fotografía principal:",
+                                      {
+                                        photoUrl,
+                                        fileId:
+                                          photo?.appwriteId ||
+                                          photo?.fileId ||
+                                          photo?.storageFileId ||
+                                          photo?.$id ||
+                                          "",
+                                        error: event.nativeEvent.error,
+                                      },
+                                    );
+                                  }}
                                 />
                               ) : (
                                 <View
